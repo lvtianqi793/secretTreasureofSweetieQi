@@ -1,0 +1,57 @@
+# ==========================================
+# Python 相关
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.nox/
+*.egg-info/
+*.egg
+dist/
+build/
+*.log
+local_settings.py
+.env
+.env.*
+.coverage
+htmlcov/
+
+# ==========================================
+# Vue.js / Node.js 前端
+# ==========================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ==========================================
+# IDE / 编辑器
+# ==========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Docker
+# ==========================================
+docker-compose.override.yml
