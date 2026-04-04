@@ -32,8 +32,8 @@ spring:
       write-dates-as-timestamps: false
   servlet:
     multipart:
-      max-file-size: 500MB
-      max-request-size: 500MB
+      max-file-size: 2048MB
+      max-request-size: 2048MB
 
 # AI Model Configuration (supports OpenAI-compatible APIs)
 ai:

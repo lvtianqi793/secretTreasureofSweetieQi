@@ -5,8 +5,11 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
@@ -28,35 +31,40 @@ public class DataImportService {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     private static final int BATCH_SIZE = 5000;
 
-    /** CSV文件名关键词 -> [表名, 值列名] */
+    /** CSV文件名关键词 -> [表名, 值列名]，chilledwater/hotwater必须在water之前 */
     private static final Map<String, String[]> FILE_TABLE_MAP = new LinkedHashMap<>();
     static {
         FILE_TABLE_MAP.put("electricity", new String[]{"electricity_data", "electricity_kwh"});
+        FILE_TABLE_MAP.put("chilledwater",new String[]{"chilledwater_data", "chilledwater_tonhours"});
+        FILE_TABLE_MAP.put("hotwater",    new String[]{"hotwater_data", "hotwater_kbtu"});
         FILE_TABLE_MAP.put("water",       new String[]{"water_data", "water_m3"});
         FILE_TABLE_MAP.put("gas",         new String[]{"gas_data", "gas_therms"});
         FILE_TABLE_MAP.put("steam",       new String[]{"steam_data", "steam_lbs"});
-        FILE_TABLE_MAP.put("chilledwater",new String[]{"chilledwater_data", "chilledwater_tonhours"});
-        FILE_TABLE_MAP.put("hotwater",    new String[]{"hotwater_data", "hotwater_kbtu"});
         FILE_TABLE_MAP.put("solar",       new String[]{"solar_data", "solar_kwh"});
         FILE_TABLE_MAP.put("irrigation",  new String[]{"irrigation_data", "irrigation_gallon"});
     }
 
-    /** 天气数据单独处理 (双值列) */
+    /** 天气数据单独处理 (列结构不同) */
     private static final String WEATHER_KEY = "weather";
 
     private static final DateTimeFormatter[] TIME_FORMATTERS = {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
             DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm"),
-            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss")
+            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
+            DateTimeFormatter.ofPattern("yyyy/M/d H:mm"),
+            DateTimeFormatter.ofPattern("yyyy/M/d HH:mm"),
+            DateTimeFormatter.ofPattern("yyyy/M/d H:mm:ss")
     };
 
     /**
-     * 通过文件上传导入CSV
+     * 通过文件上传导入CSV（不加@Transactional，内部分批提交事务）
      */
-    @Transactional
     public ImportResult importCsvFile(MultipartFile file) throws IOException {
         String fileName = file.getOriginalFilename();
         log.info("开始导入CSV文件: {}", fileName);
@@ -68,9 +76,8 @@ public class DataImportService {
     }
 
     /**
-     * 从本地文件路径导入CSV
+     * 从本地文件路径导入CSV（不加@Transactional，内部分批提交事务）
      */
-    @Transactional
     public ImportResult importCsvFromPath(String filePath) throws IOException {
         File file = new File(filePath);
         String fileName = file.getName();
@@ -85,7 +92,6 @@ public class DataImportService {
     /**
      * 批量导入目录下所有CSV文件
      */
-    @Transactional
     public List<ImportResult> importDirectory(String dirPath) throws IOException {
         File dir = new File(dirPath);
         if (!dir.isDirectory()) {
@@ -115,7 +121,7 @@ public class DataImportService {
     }
 
     /**
-     * 核心导入逻辑
+     * 核心导入逻辑（每BATCH_SIZE行一个独立事务，避免大文件内存溢出）
      */
     private ImportResult doImport(BufferedReader reader, String fileName) throws IOException {
         long startTime = System.currentTimeMillis();
@@ -149,6 +155,11 @@ public class DataImportService {
                     .fileName(fileName).status("failed").message("文件为空").build();
         }
 
+        // 确定目标表名和值列名（用于lambda内部引用）
+        final String targetTable = isWeather ? "weather_data" : tableInfo[0];
+        final boolean finalIsWeather = isWeather;
+        final String valueCol = isWeather ? null : tableInfo[1];
+
         // 解析并批量插入
         String line;
         long totalRows = 0;
@@ -160,22 +171,27 @@ public class DataImportService {
             totalRows++;
             try {
                 String[] cols = parseCsvLine(line);
-                if (cols.length < 4) { skippedRows++; continue; }
-
-                String buildingId = cols[0].trim();
-                String buildingType = cols[1].trim();
-                LocalDateTime monitorTime = parseDateTime(cols[2].trim());
-                if (monitorTime == null) { skippedRows++; continue; }
+                if (cols.length < 3) { skippedRows++; continue; }
 
                 if (isWeather) {
-                    double temp = parseDoubleOrZero(cols[3]);
-                    double humidity = cols.length > 4 ? parseDoubleOrZero(cols[4]) : 0;
+                    // weather CSV列结构: 站点编号, 监测时间, 环境温度(°C), 湿度(%RH), 风速(m/s)
+                    String stationId = cols[0].trim();
+                    LocalDateTime monitorTime = parseDateTime(cols[1].trim());
+                    if (monitorTime == null) { skippedRows++; continue; }
+                    double temp = parseDoubleOrZero(cols[2]);
+                    double humidity = cols.length > 3 ? parseDoubleOrZero(cols[3]) : 0;
+                    double windSpeed = cols.length > 4 ? parseDoubleOrZero(cols[4]) : 0;
                     batchValues.add(String.format(
-                            "('%s','%s','%s',%f,%f)",
-                            escapeSql(buildingId), escapeSql(buildingType),
-                            monitorTime.toString(), temp, humidity
+                            "('%s','%s','%s',%f,%f,%f)",
+                            escapeSql(stationId), "weather_station",
+                            monitorTime.toString(), temp, humidity, windSpeed
                     ));
                 } else {
+                    if (cols.length < 4) { skippedRows++; continue; }
+                    String buildingId = cols[0].trim();
+                    String buildingType = cols[1].trim();
+                    LocalDateTime monitorTime = parseDateTime(cols[2].trim());
+                    if (monitorTime == null) { skippedRows++; continue; }
                     double value = parseDoubleOrZero(cols[3]);
                     batchValues.add(String.format(
                             "('%s','%s','%s',%f)",
@@ -185,13 +201,15 @@ public class DataImportService {
                 }
                 importedRows++;
 
-                // 批量执行
+                // 每BATCH_SIZE行在独立事务中提交
                 if (batchValues.size() >= BATCH_SIZE) {
-                    flushBatch(batchValues, isWeather ? "weather_data" : tableInfo[0],
-                            isWeather, isWeather ? null : tableInfo[1]);
+                    List<String> batch = new ArrayList<>(batchValues);
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                        flushBatch(batch, targetTable, finalIsWeather, valueCol);
+                        entityManager.flush();
+                        entityManager.clear();
+                    });
                     batchValues.clear();
-                    entityManager.flush();
-                    entityManager.clear();
                 }
 
             } catch (Exception e) {
@@ -204,8 +222,10 @@ public class DataImportService {
 
         // 刷入剩余数据
         if (!batchValues.isEmpty()) {
-            flushBatch(batchValues, isWeather ? "weather_data" : tableInfo[0],
-                    isWeather, isWeather ? null : tableInfo[1]);
+            List<String> batch = new ArrayList<>(batchValues);
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                flushBatch(batch, targetTable, finalIsWeather, valueCol);
+            });
         }
 
         long costMs = System.currentTimeMillis() - startTime;
@@ -214,7 +234,7 @@ public class DataImportService {
 
         return ImportResult.builder()
                 .fileName(fileName)
-                .tableName(isWeather ? "weather_data" : tableInfo[0])
+                .tableName(targetTable)
                 .totalRows(totalRows)
                 .importedRows(importedRows)
                 .skippedRows(skippedRows)
@@ -233,7 +253,7 @@ public class DataImportService {
 
         String columns;
         if (isWeather) {
-            columns = "(building_id, building_type, monitor_time, temperature_f, humidity_pct)";
+            columns = "(building_id, building_type, monitor_time, temperature_c, humidity_pct, wind_speed_ms)";
         } else {
             columns = "(building_id, building_type, monitor_time, " + valueCol + ")";
         }
@@ -296,7 +316,7 @@ public class DataImportService {
                         .getSingleResult();
                 overview.put(table, ((Number) count).longValue());
             } catch (Exception e) {
-                overview.put(table, -1L); // 表可能不存在
+                overview.put(table, -1L);
             }
         }
         return overview;
@@ -307,7 +327,6 @@ public class DataImportService {
      */
     @Transactional
     public void clearTable(String tableName) {
-        // 安全检查
         List<String> allowedTables = List.of("electricity_data", "water_data", "gas_data",
                 "steam_data", "chilledwater_data", "hotwater_data", "solar_data",
                 "irrigation_data", "weather_data");
