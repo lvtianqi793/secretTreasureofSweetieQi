@@ -36,9 +36,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
 
 # ==========================================
 # IDE / 编辑器
@@ -55,4 +52,95 @@ Thumbs.db
 # Docker
 # ==========================================
 docker-compose.override.yml
+
+# ==========================================
+# Spring Boot / Java 相关
+# ==========================================
+
+# 编译输出
+target/
 *.class
+
+# Maven 相关
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# Gradle 相关
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+gradle-app.setting
+
+# Spring Boot 配置备份
+application-*.properties.orig
+application-*.yml.orig
+bootstrap-*.properties.orig
+bootstrap-*.yml.orig
+
+# Spring Boot Actuator
+springboot-actuator.log
+metrics.log
+
+# JVM 崩溃日志
+hs_err_pid*.log
+replay_pid*.log
+
+# Java 堆转储
+*.hprof
+*.heap
+
+# Spring Cloud Config
+spring-cloud-config-repo/
+
+# 日志
+logs/
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+*.cache
+
+# 敏感配置（必须忽略）
+application-secret.properties
+application-secret.yml
+bootstrap-secret.properties
+bootstrap-secret.yml
+application-prod.properties
+application-prod.yml
+bootstrap-prod.yml
+bootstrap-prod.properties
+
+# IDE 生成文件
+.apt_generated/
+.springBeans/
+.sts4-cache/
+.factorypath
+.springboot
+
+# Docker 构建产物
+Dockerfile.dev
+docker-compose.dev.yml
+*.tar.gz
+*.jar.docker
+*.war.docker
+
+# Kubernetes 敏感文件
+k8s/secrets.yaml
+k8s/*-secret.yaml
+
+# 测试报告
+test-output/
+surefire-reports/
+failsafe-reports/
+test-results/
+
+# 热部署
+spring-devtools.properties
+remote-spring-boot-devtools.properties
