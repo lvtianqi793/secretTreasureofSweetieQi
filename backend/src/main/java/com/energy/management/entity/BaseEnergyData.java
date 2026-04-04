@@ -2,6 +2,7 @@ package com.energy.management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
 /**

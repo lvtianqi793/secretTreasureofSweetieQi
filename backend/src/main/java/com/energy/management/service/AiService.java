@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * AI大模型服务 - 对接OpenAI兼容API (Ollama / 通义千问 / ChatGPT等)

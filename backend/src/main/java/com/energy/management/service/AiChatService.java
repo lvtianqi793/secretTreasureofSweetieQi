@@ -2,9 +2,7 @@ package com.energy.management.service;
 
 import com.energy.management.dto.AiChatRequest;
 import com.energy.management.dto.AiChatResponse;
-import com.energy.management.dto.ChatMessage;
 import com.energy.management.util.DatabaseSchema;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;

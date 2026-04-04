@@ -1,6 +1,9 @@
 package com.energy.management.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -14,15 +17,13 @@ import lombok.EqualsAndHashCode;
 })
 public class WeatherData extends BaseEnergyData {
 
-    /** 环境温度 (°C) */
-    @Column(name = "temperature_c")
-    private Double temperatureC;
+    /**
+     * 温度 (°F)
+     */
+    @Column(name = "temperature_f")
+    private Double temperatureF;
 
     /** 湿度 (%RH) */
     @Column(name = "humidity_pct")
     private Double humidityPct;
-
-    /** 风速 (m/s) */
-    @Column(name = "wind_speed_ms")
-    private Double windSpeedMs;
 }
