@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import MarkdownMessage from './MarkdownMessage.vue'
 
 type Role = 'user' | 'assistant'
 
@@ -177,7 +178,7 @@ function onKeyDown(e: KeyboardEvent) {
           :data-role="m.role"
         >
           <span class="ai-bubble__label">{{ m.role === 'user' ? '我' : 'AI' }}</span>
-          <div class="ai-bubble__text">{{ m.content }}</div>
+          <MarkdownMessage class="ai-bubble__text" :content="m.content" />
         </div>
         <div v-if="loading" class="ai-bubble ai-bubble--assistant ai-bubble--pending">
           <span class="ai-bubble__label">AI</span>
