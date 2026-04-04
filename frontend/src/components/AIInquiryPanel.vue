@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 type Role = 'user' | 'assistant'
 
@@ -9,29 +9,46 @@ type ChatMessage = {
   content: string
 }
 
+type QaMode = 'kb' | 'db'
+
+/** 知识库 → ops；数据库 → chat */
+function endpointForMode(m: QaMode): 'ops' | 'chat' {
+  return m === 'kb' ? 'ops' : 'chat'
+}
+
+const mode = ref<QaMode>('kb')
+
+const messagesKb = ref<ChatMessage[]>([])
+const messagesDb = ref<ChatMessage[]>([])
+
+function messagesForActiveMode() {
+  return mode.value === 'kb' ? messagesKb : messagesDb
+}
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function resolveRequestUrl(): string {
+  const ep = endpointForMode(mode.value)
+  const raw = import.meta.env.VITE_AI_API_URL
+  const base = typeof raw === 'string' ? raw.replace(/\/$/, '') : ''
+  if (base) return `${base}/${ep}`
+  return `/api/ai/${ep}`
 }
 
 /**
  * 后端可接 POST JSON：{ messages: { role, content }[] }
  * 返回 JSON：{ reply: string } 或纯文本。
- * 未配置 VITE_AI_API_URL 时使用本地演示回复。
+ * 同源开发时请求 `/api/ai/chat` 或 `/api/ai/ops`，由 Vite 代理到后端；也可设置 VITE_AI_API_URL（到 `/api/ai` 为止）直连。
  */
 async function requestAssistant(messages: ChatMessage[]): Promise<string> {
-  const raw = import.meta.env.VITE_AI_API_URL
-  const base = typeof raw === 'string' ? raw.replace(/\/$/, '') : ''
+  const url = resolveRequestUrl()
   const payload = {
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
   }
 
-  if (!base) {
-    await new Promise((r) => setTimeout(r, 600))
-    const last = messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
-    return `（演示模式）您说：「${last}」。在 frontend 目录创建 .env 并设置 VITE_AI_API_URL=你的服务地址 即可接入真实 AI。开发时也可把请求发到同源 /api，由 vite 代理到后端。`
-  }
-
-  const res = await fetch(`${base}/chat`, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -53,19 +70,24 @@ async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   return (await res.text()).trim() || '（空回复）'
 }
 
-const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const listRef = ref<HTMLDivElement | null>(null)
+
+const activeMessages = computed(() => (mode.value === 'kb' ? messagesKb.value : messagesDb.value))
 
 function scrollBottom() {
   const el = listRef.value
   if (el) el.scrollTop = el.scrollHeight
 }
 
+watch(mode, () => {
+  error.value = null
+})
+
 watch(
-  [messages, loading],
+  [mode, messagesKb, messagesDb, loading],
   () => {
     void nextTick(() => scrollBottom())
   },
@@ -77,13 +99,14 @@ async function send() {
   if (!text || loading.value) return
   error.value = null
   const userMsg: ChatMessage = { id: newId(), role: 'user', content: text }
-  messages.value = [...messages.value, userMsg]
+  const bucket = messagesForActiveMode()
+  bucket.value = [...bucket.value, userMsg]
   input.value = ''
   loading.value = true
   try {
-    const history = [...messages.value]
+    const history = [...bucket.value]
     const reply = await requestAssistant(history)
-    messages.value = [...messages.value, { id: newId(), role: 'assistant', content: reply }]
+    bucket.value = [...bucket.value, { id: newId(), role: 'assistant', content: reply }]
   } catch (e) {
     const msg = e instanceof Error ? e.message : '未知错误'
     error.value = msg
@@ -91,6 +114,16 @@ async function send() {
     loading.value = false
   }
 }
+
+const modeSubtitle = computed(() =>
+  mode.value === 'kb'
+    ? '当前：知识库（api/ai/ops）；Shift+Enter 换行'
+    : '当前：数据库（api/ai/chat）；Shift+Enter 换行',
+)
+
+const inputPlaceholder = computed(() =>
+  mode.value === 'kb' ? '向知识库提问…' : '向数据库问答提问…',
+)
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -101,21 +134,43 @@ function onKeyDown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="ai-panel" aria-label="AI 询问">
+  <section class="ai-panel" aria-label="AI 问答">
     <header class="ai-panel__header">
-      <div>
-        <h1 class="ai-panel__title">AI 询问</h1>
-        <p class="ai-panel__subtitle">在搜索框输入后发送；Shift+Enter 换行</p>
+      <div class="ai-panel__header-top">
+        <h1 class="ai-panel__title">AI 问答</h1>
+        <div class="ai-mode-switch" role="tablist" aria-label="问答模式">
+          <button
+            type="button"
+            role="tab"
+            class="ai-mode-switch__btn"
+            :class="{ 'ai-mode-switch__btn--active': mode === 'kb' }"
+            :aria-selected="mode === 'kb'"
+            @click="mode = 'kb'"
+          >
+            知识库问答
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="ai-mode-switch__btn"
+            :class="{ 'ai-mode-switch__btn--active': mode === 'db' }"
+            :aria-selected="mode === 'db'"
+            @click="mode = 'db'"
+          >
+            数据库问答
+          </button>
+        </div>
       </div>
+      <p class="ai-panel__subtitle">{{ modeSubtitle }}</p>
     </header>
 
     <div class="ai-panel__body">
       <div ref="listRef" class="ai-messages" role="log" aria-live="polite">
-        <p v-if="messages.length === 0 && !loading" class="ai-messages__empty">
-          在下方搜索框输入问题开始对话。
+        <p v-if="activeMessages.length === 0 && !loading" class="ai-messages__empty">
+          在下方输入问题开始对话。
         </p>
         <div
-          v-for="m in messages"
+          v-for="m in activeMessages"
           :key="m.id"
           class="ai-bubble"
           :class="[`ai-bubble--${m.role}`]"
@@ -151,9 +206,9 @@ function onKeyDown(e: KeyboardEvent) {
           v-model="input"
           class="ai-search-box__input"
           rows="1"
-          placeholder="向 AI 提问或搜索…"
+          :placeholder="inputPlaceholder"
           :disabled="loading"
-          aria-label="AI 搜索与询问"
+          aria-label="问答输入"
           @keydown="onKeyDown"
         />
         <button

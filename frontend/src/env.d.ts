@@ -7,6 +7,10 @@ declare module '*.vue' {
 }
 
 interface ImportMetaEnv {
+  /**
+   * AI 接口前缀，需包含到 `/api/ai` 为止，例如 `http://127.0.0.1:8000/api/ai`。
+   * 未设置时前端请求同源相对路径 `/api/ai/chat`、`/api/ai/ops`（由 Vite 代理到后端）。
+   */
   readonly VITE_AI_API_URL?: string
 }
 
