@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 # 在类定义前加载环境变量
 _BASE_DIR = Path(__file__).parent.parent
-_ENV_FILE = _BASE_DIR / ".env.example"
+_ENV_FILE = _BASE_DIR / ".env"
 load_dotenv(dotenv_path=_ENV_FILE if _ENV_FILE.exists() else None)
 
 
