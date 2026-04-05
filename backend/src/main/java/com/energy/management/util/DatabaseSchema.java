@@ -46,9 +46,13 @@ public class DatabaseSchema {
                - irrigation_gallon: DOUBLE (灌溉用水量, 单位gallon)
             
             9. weather_data (气象数据表)
-               - id, building_id, building_type, monitor_time (同上)
-               - temperature_f: DOUBLE (温度, 单位°F)
+               - id: BIGINT (主键)
+               - building_id: VARCHAR(100) (站点编号, 如 'Panther')
+               - building_type: VARCHAR(50) (固定值 'weather_station')
+               - monitor_time: TIMESTAMP (监测时间, 精确到小时)
+               - temperature_c: DOUBLE (环境温度, 单位°C)
                - humidity_pct: DOUBLE (湿度, 单位%RH)
+               - wind_speed_ms: DOUBLE (风速, 单位m/s)
             
             === 常用查询模式 ===
             - 时间范围查询: WHERE monitor_time BETWEEN '2016-01-01' AND '2016-12-31'
@@ -57,6 +61,7 @@ public class DatabaseSchema {
             - 时段汇总: SELECT DATE_TRUNC('month', monitor_time) as period, SUM(xxx) ...
             - COP计算: 需要关联 chilledwater_data 和 electricity_data 表
               COP = (冷冻水ton-hours × 3.517) / 电力kWh
+            - 能耗与天气关联: JOIN weather_data w ON DATE_TRUNC('hour', e.monitor_time) = DATE_TRUNC('hour', w.monitor_time)
             
             === 重要规则 ===
             1. 只生成SELECT查询, 禁止INSERT/UPDATE/DELETE/DROP等修改操作
@@ -70,33 +75,34 @@ public class DatabaseSchema {
             
             %s
             
-            === 输出格式 ===
-            如果需要查询数据库, 请严格按以下JSON格式返回:
-            {"needQuery": true, "sql": "SELECT ...", "chartType": "bar|line|pie|table|none", "description": "查询说明"}
+            === 输出格式要求 ===
+            你必须且只能返回一个JSON对象, 不要返回任何其他文字。
             
-            如果不需要查询数据库(比如运维知识问答), 请返回:
-            {"needQuery": false, "answer": "你的回答内容", "chartType": "none"}
+            情况1 - 需要查数据库:
+            {"needQuery": true, "sql": "SELECT ...", "chartType": "bar", "description": "说明"}
+            chartType可选值: bar, line, pie, table, none
             
-            只返回JSON, 不要包含其他文字或markdown格式。
+            情况2 - 不需要查数据库(运维知识问答):
+            {"needQuery": false, "answer": "回答内容", "chartType": "none"}
+            
+            再次强调: 只返回JSON, 不加任何多余文字。
             """.formatted(SCHEMA_DESCRIPTION);
 
     public static final String ANALYSIS_PROMPT_TEMPLATE = """
-            你是建筑能源管理领域的专家分析师。请根据以下查询结果进行专业分析。
+            你是建筑能源管理领域的专家。请根据以下数据回答用户问题。
             
             用户问题: %s
             
             执行的SQL: %s
             
-            查询结果 (JSON格式):
+            查询结果:
             %s
             
-            请提供:
+            请用中文回答, 包含:
             1. 数据概况总结
-            2. 关键发现与趋势分析
-            3. 异常情况说明 (如有)
-            4. 专业建议与优化方向
-            
-            请用中文回答, 结构清晰, 数据引用准确。
+            2. 关键发现
+            3. 异常说明(如有)
+            4. 优化建议
             """;
 
     /**
@@ -107,16 +113,18 @@ public class DatabaseSchema {
             1. 解答建筑能源管理相关的运维问题
             2. 提供设备故障排查步骤和维护规范
             3. 分析能耗异常原因并给出解决方案
-            4. 解释能源管理相关的技术概念和指标 (如COP、EER、能效比等)
+            4. 解释能源管理相关的技术概念和指标(如COP、EER、能效比等)
             5. 指导暖通空调(HVAC)系统的运维操作流程
             
             运维知识要点:
-            - COP (制冷性能系数) = 制冷量(kW) / 压缩机功率(kW), 一般空调COP在2.5-6.0之间
-            - 能耗异常判断: 使用Z-score方法, |Z| > 2视为异常, |Z| > 3视为严重异常
+            - COP(制冷性能系数) = 制冷量(kW) / 压缩机功率(kW), 一般空调COP在2.5-6.0之间
+            - 能耗异常判断: 使用Z-score方法, |Z|>2视为异常, |Z|>3视为严重异常
             - 常见能耗异常原因: 设备老化、管道泄漏、控制系统故障、使用模式改变、天气异常
             - 冷冻水系统: 供水温度一般5-7°C, 回水温度一般12-14°C, 温差异常需排查
             - 锅炉效率: 冷凝锅炉效率>95%, 常规锅炉>85%, 低于标准需维护
+            - 风速对建筑能耗的影响: 风速增大会加剧建筑热损失, 冬季尤为明显
+            - 温湿度与能耗关系: 夏季高温高湿增加制冷负荷, 冬季低温增加采暖负荷
             
-            请用中文回答, 专业准确, 条理清晰。当涉及具体数据查询时, 你可以建议用户使用数据查询功能。
+            请用中文回答, 专业准确, 条理清晰。当涉及具体数据查询时, 建议用户使用数据查询功能。
             """;
 }

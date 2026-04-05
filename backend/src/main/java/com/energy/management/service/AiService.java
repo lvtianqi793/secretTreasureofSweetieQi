@@ -38,41 +38,34 @@ public class AiService {
      */
     public String chat(String systemPrompt, String userMessage, List<ChatMessage> history) {
         try {
-            ObjectNode requestBody = objectMapper.createObjectNode();
-            requestBody.put("model", aiConfig.getModel());
-            requestBody.put("max_tokens", aiConfig.getMaxTokens());
-            requestBody.put("temperature", 0.1); // 低温度保证SQL生成稳定性
+            // 拼接prompt: 系统提示 + 历史对话 + 当前问题
+            StringBuilder promptBuilder = new StringBuilder();
 
-            ArrayNode messages = requestBody.putArray("messages");
-
-            // 系统提示词
             if (systemPrompt != null && !systemPrompt.isEmpty()) {
-                ObjectNode sysMsg = messages.addObject();
-                sysMsg.put("role", "system");
-                sysMsg.put("content", systemPrompt);
+                promptBuilder.append("[系统指令]\n").append(systemPrompt).append("\n\n");
             }
 
-            // 对话历史
             if (history != null) {
                 for (ChatMessage msg : history) {
-                    ObjectNode histMsg = messages.addObject();
-                    histMsg.put("role", msg.getRole());
-                    histMsg.put("content", msg.getContent());
+                    if ("user".equals(msg.getRole())) {
+                        promptBuilder.append("[用户] ").append(msg.getContent()).append("\n");
+                    } else {
+                        promptBuilder.append("[助手] ").append(msg.getContent()).append("\n");
+                    }
                 }
             }
 
-            // 当前用户消息
-            ObjectNode userMsg = messages.addObject();
-            userMsg.put("role", "user");
-            userMsg.put("content", userMessage);
+            promptBuilder.append("[用户] ").append(userMessage).append("\n[助手] ");
+
+            ObjectNode requestBody = objectMapper.createObjectNode();
+            requestBody.put("prompt", promptBuilder.toString());
 
             String jsonBody = objectMapper.writeValueAsString(requestBody);
-            log.debug("AI request: {}", jsonBody);
+            log.debug("AI request: {}", jsonBody.substring(0, Math.min(500, jsonBody.length())));
 
             Request request = new Request.Builder()
-                    .url(aiConfig.getBaseUrl() + "/chat/completions")
+                    .url(aiConfig.getBaseUrl() + "/generate?Content-Type=application/json")
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Authorization", "Bearer " + aiConfig.getApiKey())
                     .post(RequestBody.create(jsonBody, JSON_MEDIA))
                     .build();
 
@@ -83,23 +76,40 @@ public class AiService {
                     throw new RuntimeException("AI API调用失败: " + response.code() + " - " + errBody);
                 }
 
-                String responseBody = response.body().string();
-                log.debug("AI response: {}", responseBody);
+                // 流式响应: 每行一个JSON, 拼接所有response字段直到done=true
+                String rawBody = response.body().string();
+                log.debug("AI raw response length: {}", rawBody.length());
 
-                JsonNode root = objectMapper.readTree(responseBody);
-                JsonNode choices = root.get("choices");
-                if (choices != null && choices.isArray() && choices.size() > 0) {
-                    return choices.get(0).get("message").get("content").asText();
+                StringBuilder fullResponse = new StringBuilder();
+                for (String line : rawBody.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    try {
+                        JsonNode node = objectMapper.readTree(line);
+                        if (node.has("response")) {
+                            fullResponse.append(node.get("response").asText());
+                        }
+                        if (node.has("done") && node.get("done").asBoolean()) {
+                            break;
+                        }
+                    } catch (Exception e) {
+                        log.warn("跳过无法解析的行: {}", line);
+                    }
                 }
 
-                throw new RuntimeException("AI返回格式异常: " + responseBody);
+                String result = fullResponse.toString().trim();
+                if (result.isEmpty()) {
+                    throw new RuntimeException("AI返回内容为空, 原始响应: " + rawBody.substring(0, Math.min(200, rawBody.length())));
+                }
+
+                log.debug("AI final response: {}", result.substring(0, Math.min(200, result.length())));
+                return result;
             }
         } catch (IOException e) {
             log.error("AI API通信异常", e);
             throw new RuntimeException("AI服务通信失败: " + e.getMessage(), e);
         }
     }
-
     /**
      * 简单对话 (无历史)
      */

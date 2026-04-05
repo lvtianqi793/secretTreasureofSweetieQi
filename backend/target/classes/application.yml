@@ -38,10 +38,10 @@ spring:
 # AI Model Configuration (supports OpenAI-compatible APIs)
 ai:
   api:
-    base-url: http://localhost:11434/v1  # Ollama local or any OpenAI-compatible endpoint
-    api-key: your-api-key-here
-    model: qwen2.5:7b                    # Model name
-    timeout: 120                          # Timeout in seconds
+    base-url: http://localhost:8000
+    api-key:
+    model: qwen3.5:2b
+    timeout: 120
     max-tokens: 4096
 
 # CSV data import path
