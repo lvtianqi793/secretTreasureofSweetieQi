@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Spring Boot后端服务
+  energy-backend:
+    build:
+      context: .      # 指向Dockerfile所在的backend目录
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"            # 宿主机8080端口映射容器8080
+    environment:
+      # 数据库连接配置（与下方PostgreSQL服务对应）
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/energy_management
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=ltqltq2005
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update  # 生产环境建议改为none
+      - SPRING_JPA_SHOW_SQL=true
+      - SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL=true
+    restart: always
+    depends_on:
+      - postgres-db            # 依赖PostgreSQL，确保先启动数据库
+
+  # PostgreSQL数据库服务（适配pom.xml中的postgresql依赖）
+  postgres-db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"            # 宿主机5432端口映射容器5432
+    environment:
+      - POSTGRES_USER=postgres       # 数据库用户名
+      - POSTGRES_PASSWORD=ltqltq2005   # 数据库密码
+      - POSTGRES_DB=energy_db           # 初始化数据库名
+      - TZ=Asia/Shanghai
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # 持久化数据库数据
+    restart: always
+
+# 数据卷：持久化PostgreSQL数据（删除容器后数据不丢失）
+volumes:
+  postgres-data:
