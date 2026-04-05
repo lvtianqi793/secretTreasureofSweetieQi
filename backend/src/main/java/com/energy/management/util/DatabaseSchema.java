@@ -46,10 +46,9 @@ public class DatabaseSchema {
                - irrigation_gallon: DOUBLE (灌溉用水量, 单位gallon)
             
             9. weather_data (气象数据表)
-               - id, building_id, building_type, monitor_time (同上, building_id存储站点编号)
-               - temperature_c: DOUBLE (环境温度, 单位°C)
+               - id, building_id, building_type, monitor_time (同上)
+               - temperature_f: DOUBLE (温度, 单位°F)
                - humidity_pct: DOUBLE (湿度, 单位%RH)
-               - wind_speed_ms: DOUBLE (风速, 单位m/s)
             
             === 常用查询模式 ===
             - 时间范围查询: WHERE monitor_time BETWEEN '2016-01-01' AND '2016-12-31'
