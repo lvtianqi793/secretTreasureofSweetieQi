@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
             logger.error(f"配置错误: {error}")
         raise RuntimeError("配置验证失败")
     
-    # 验证系统 prompt 可加载
-    loader = get_prompt_loader()
+    # 验证系统 prompt 可加载（检查 chat 作为代表）
+    loader = get_prompt_loader("chat")
     system_prompt = loader.get_prompt()
     if system_prompt:
         logger.info(f"系统 prompt 已加载，长度: {len(system_prompt)} 字符")
@@ -84,51 +84,25 @@ app.add_middleware(
 )
 
 
-@app.post(
-    "/generate",
-    response_class=StreamingResponse,
-    summary="流式生成文本",
-    description="接收用户 prompt，结合系统 prompt，流式返回 Ollama 生成结果",
-    responses={
-        200: {
-            "description": "SSE 流式响应",
-            "content": {
-                "text/event-stream": {
-                    "example": 'data: {"response": "你好", "done": false}\n\n'
-                }
-            }
-        },
-        422: {
-            "description": "请求参数验证失败",
-            "model": ErrorResponse
-        },
-        503: {
-            "description": "Ollama 服务不可用",
-            "model": ErrorResponse
-        }
-    }
-)
-async def generate(request: ChatRequest):
+async def generate_with_type(request: ChatRequest, prompt_type: str):
     """
-    生成端点 - 核心功能
+    通用生成逻辑，根据类型加载对应系统 prompt
     
-    流程：
-    1. 接收 SpringBoot 发送的 ChatRequest
-    2. 从文件加载系统 prompt
-    3. 调用 Ollama 流式生成
-    4. 返回 SSE 流给 SpringBoot
+    Args:
+        request: 请求体
+        prompt_type: prompt 类型 (chat/generatesql/analyse)
     """
-    logger.info(f"收到生成请求，prompt长度: {len(request.prompt)}")
+    logger.info(f"收到 [{prompt_type}] 生成请求，prompt长度: {len(request.prompt)}")
     
-    # 获取系统 prompt（自动处理缓存和热重载）
-    loader = get_prompt_loader()
+    # 获取对应类型的系统 prompt
+    loader = get_prompt_loader(prompt_type)
     system_prompt = loader.get_prompt()
     
     if not system_prompt:
-        logger.error("系统 prompt 加载失败")
+        logger.error(f"[{prompt_type}] 系统 prompt 加载失败")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="系统 prompt 未配置或文件读取失败"
+            detail=f"[{prompt_type}] 系统 prompt 未配置或文件读取失败"
         )
     
     # 获取 Ollama 客户端
@@ -162,14 +136,14 @@ async def generate(request: ChatRequest):
                 yield chunk
                 chunk_count += 1
             
-            logger.info(f"流式响应完成，共 {chunk_count} 个 chunk")
+            logger.info(f"[{prompt_type}] 流式响应完成，共 {chunk_count} 个 chunk")
             
             # 如果没有收到任何数据，发送错误信息
             if chunk_count == 0:
                 yield f"data: {json.dumps({'error': 'No response from Ollama', 'done': True})}\n\n"
                 
         except Exception as e:
-            logger.error(f"流式生成异常: {e}")
+            logger.error(f"[{prompt_type}] 流式生成异常: {e}")
             error_data = {
                 "error": str(e),
                 "error_type": type(e).__name__,
@@ -190,6 +164,106 @@ async def generate(request: ChatRequest):
     )
 
 
+@app.post(
+    "/generate/chat",
+    response_class=StreamingResponse,
+    summary="流式聊天生成",
+    description="接收用户 prompt，结合 chat 系统 prompt，流式返回结果",
+    responses={
+        200: {
+            "description": "SSE 流式响应",
+            "content": {
+                "text/event-stream": {
+                    "example": 'data: {"response": "你好", "done": false}\n\n'
+                }
+            }
+        },
+        422: {
+            "description": "请求参数验证失败",
+            "model": ErrorResponse
+        },
+        503: {
+            "description": "Ollama 服务不可用",
+            "model": ErrorResponse
+        }
+    }
+)
+async def generate_chat(request: ChatRequest):
+    """聊天生成端点"""
+    return await generate_with_type(request, "chat")
+
+
+@app.post(
+    "/generate/generatesql",
+    response_class=StreamingResponse,
+    summary="流式 SQL 生成",
+    description="接收用户 prompt，结合 generatesql 系统 prompt，流式返回结果",
+    responses={
+        200: {
+            "description": "SSE 流式响应",
+            "content": {
+                "text/event-stream": {
+                    "example": 'data: {"response": "SELECT", "done": false}\n\n'
+                }
+            }
+        },
+        422: {
+            "description": "请求参数验证失败",
+            "model": ErrorResponse
+        },
+        503: {
+            "description": "Ollama 服务不可用",
+            "model": ErrorResponse
+        }
+    }
+)
+async def generate_sql(request: ChatRequest):
+    """SQL 生成端点"""
+    return await generate_with_type(request, "generatesql")
+
+
+@app.post(
+    "/generate/analyse",
+    response_class=StreamingResponse,
+    summary="流式分析生成",
+    description="接收用户 prompt，结合 analyse 系统 prompt，流式返回结果",
+    responses={
+        200: {
+            "description": "SSE 流式响应",
+            "content": {
+                "text/event-stream": {
+                    "example": 'data: {"response": "分析", "done": false}\n\n'
+                }
+            }
+        },
+        422: {
+            "description": "请求参数验证失败",
+            "model": ErrorResponse
+        },
+        503: {
+            "description": "Ollama 服务不可用",
+            "model": ErrorResponse
+        }
+    }
+)
+async def generate_analyse(request: ChatRequest):
+    """分析生成端点"""
+    return await generate_with_type(request, "analyse")
+
+
+# 保留旧接口兼容（可选，可删除）
+@app.post(
+    "/generate",
+    response_class=StreamingResponse,
+    summary="流式生成文本（兼容旧接口）",
+    description="默认使用 chat 系统 prompt",
+    deprecated=True  # 标记为已弃用
+)
+async def generate(request: ChatRequest):
+    """兼容旧接口，默认使用 chat"""
+    return await generate_with_type(request, "chat")
+
+
 @app.get(
     "/health",
     response_model=HealthResponse,
@@ -202,17 +276,21 @@ async def health():
     SpringBoot 可用此端点做服务发现和健康监测
     """
     client = get_ollama_client()
-    loader = get_prompt_loader()
+    
+    # 检查所有 prompt 类型
+    chat_ok = get_prompt_loader("chat").get_prompt() is not None
+    sql_ok = get_prompt_loader("generatesql").get_prompt() is not None
+    analyse_ok = get_prompt_loader("analyse").get_prompt() is not None
     
     ollama_ok = await client.check_connection()
-    prompt_ok = loader.get_prompt() is not None
+    all_prompt_ok = chat_ok and sql_ok and analyse_ok
     
-    status_value = "ok" if (ollama_ok and prompt_ok) else "error"
+    status_value = "ok" if (ollama_ok and all_prompt_ok) else "error"
     
     return HealthResponse(
         status=status_value,
         ollama_connected=ollama_ok,
-        system_prompt_loaded=prompt_ok
+        system_prompt_loaded=all_prompt_ok
     )
 
 
@@ -223,8 +301,11 @@ async def health():
 )
 async def prompt_info():
     """获取系统 prompt 文件元数据"""
-    loader = get_prompt_loader()
-    return loader.get_file_info()
+    return {
+        "chat": get_prompt_loader("chat").get_file_info(),
+        "generatesql": get_prompt_loader("generatesql").get_file_info(),
+        "analyse": get_prompt_loader("analyse").get_file_info()
+    }
 
 
 # 启动入口

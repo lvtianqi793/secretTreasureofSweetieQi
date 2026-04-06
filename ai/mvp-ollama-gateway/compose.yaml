@@ -8,12 +8,20 @@
 # database or a cache. For examples, see the Awesome Compose repository:
 # https://github.com/docker/awesome-compose
 services:
-  server:
+  fastapi:
     build: .
     ports:
       - "8000:8000"
-    env_file:
-      - .env
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen3.5:2b
+      - SYSTEM_PROMPT_FILE=./prompts/system_prompt.txt
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - LOG_LEVEL=INFO
+      - SYSTEM_CHAT_PROMPT_FILE=./prompts/system_chat_prompt.txt
+      - SYSTEM_GENERATESQL_PROMPT_FILE=./prompts/system_generatesql_prompt.txt
+      - SYSTEM_ANALYSE_PROMPT_FILE=./prompts/system_analyse_prompt.txt
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to

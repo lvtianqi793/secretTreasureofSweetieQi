@@ -27,16 +27,26 @@ class Settings:
         
         # Ollama 服务配置
         self.OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        self.OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama2")
+        self.OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3.5:2b")
         
-        # 系统 Prompt 文件路径
-        # 默认指向项目根目录下的 prompts/system_prompt.txt
+        # 系统 Prompt 文件路径 - 支持三种类型
+        self.SYSTEM_CHAT_PROMPT_FILE: Path = self._resolve_prompt_path(
+            "SYSTEM_CHAT_PROMPT_FILE", 
+            "prompts/system_chat_prompt.txt"
+        )
+        self.SYSTEM_GENERATESQL_PROMPT_FILE: Path = self._resolve_prompt_path(
+            "SYSTEM_GENERATESQL_PROMPT_FILE",
+            "prompts/system_generatesql_prompt.txt"
+        )
+        self.SYSTEM_ANALYSE_PROMPT_FILE: Path = self._resolve_prompt_path(
+            "SYSTEM_ANALYSE_PROMPT_FILE",
+            "prompts/system_analyse_prompt.txt"
+        )
+        
+        # 保留旧配置兼容（可选）
         default_prompt_path = self.BASE_DIR / "prompts" / "system_prompt.txt"
-        
-        # 从环境变量读取，如果设置了则转换为 Path，否则使用默认路径
         env_prompt_file = os.getenv("SYSTEM_PROMPT_FILE")
         if env_prompt_file:
-            # 如果是相对路径，基于项目根目录解析
             path = Path(env_prompt_file)
             if not path.is_absolute():
                 path = self.BASE_DIR / path
@@ -51,20 +61,63 @@ class Settings:
         # 可选：日志级别
         self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
+    def _resolve_prompt_path(self, env_var: str, default_relative_path: str) -> Path:
+        """
+        解析 prompt 文件路径
+        
+        Args:
+            env_var: 环境变量名
+            default_relative_path: 默认相对路径（基于项目根目录）
+        
+        Returns:
+            解析后的绝对路径
+        """
+        env_value = os.getenv(env_var)
+        if env_value:
+            path = Path(env_value)
+            if not path.is_absolute():
+                path = self.BASE_DIR / path
+            return path.resolve()
+        else:
+            return (self.BASE_DIR / default_relative_path).resolve()
+    
     def get_system_prompt(self) -> Optional[str]:
         """
-        读取系统 prompt 文件内容
+        读取系统 prompt 文件内容（默认读取 chat）
         
         Returns:
             系统 prompt 内容，如果文件不存在则返回 None
         """
+        return self._read_prompt_file(self.SYSTEM_CHAT_PROMPT_FILE)
+    
+    def get_chat_prompt(self) -> Optional[str]:
+        """读取聊天系统 prompt"""
+        return self._read_prompt_file(self.SYSTEM_CHAT_PROMPT_FILE)
+    
+    def get_generatesql_prompt(self) -> Optional[str]:
+        """读取 SQL 生成系统 prompt"""
+        return self._read_prompt_file(self.SYSTEM_GENERATESQL_PROMPT_FILE)
+    
+    def get_analyse_prompt(self) -> Optional[str]:
+        """读取分析系统 prompt"""
+        return self._read_prompt_file(self.SYSTEM_ANALYSE_PROMPT_FILE)
+    
+    def _read_prompt_file(self, file_path: Path) -> Optional[str]:
+        """
+        读取指定 prompt 文件
+        
+        Args:
+            file_path: 文件路径
+        
+        Returns:
+            文件内容，失败返回 None
+        """
         try:
-            if not self.SYSTEM_PROMPT_FILE.exists():
+            if not file_path.exists():
                 return None
-            return self.SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
+            return file_path.read_text(encoding="utf-8")
         except Exception as e:
-            # 这里可以集成 logger，但为了保持简单先使用 print
-            print(f"读取系统 prompt 文件失败: {e}")
+            print(f"读取 prompt 文件失败 {file_path}: {e}")
             return None
     
     def validate(self) -> list[str]:
@@ -76,11 +129,15 @@ class Settings:
         """
         errors = []
         
-        # 检查系统 prompt 文件是否存在
-        if not self.SYSTEM_PROMPT_FILE.exists():
-            errors.append(
-                f"系统 prompt 文件不存在: {self.SYSTEM_PROMPT_FILE}"
-            )
+        # 检查三种系统 prompt 文件
+        prompt_files = [
+            ("chat", self.SYSTEM_CHAT_PROMPT_FILE),
+            ("generatesql", self.SYSTEM_GENERATESQL_PROMPT_FILE),
+            ("analyse", self.SYSTEM_ANALYSE_PROMPT_FILE),
+        ]
+        for name, path in prompt_files:
+            if not path.exists():
+                errors.append(f"{name} prompt 文件不存在: {path}")
         
         # 检查 Ollama URL 是否设置
         if not self.OLLAMA_URL:

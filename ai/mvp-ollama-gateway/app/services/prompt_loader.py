@@ -24,19 +24,50 @@ class PromptLoader:
     支持热重载（文件修改后自动重新加载）
     """
     
-    def __init__(self, file_path: Optional[Path] = None):
+    def __init__(self, file_path: Optional[Path] = None, prompt_type: Optional[str] = None):
         """
         初始化 Prompt 加载器
         
         Args:
-            file_path: Prompt 文件路径，默认从配置读取
+            file_path: Prompt 文件路径，优先使用
+            prompt_type: prompt 类型 (chat/generatesql/analyse)，从配置读取对应路径
         """
         # 延迟导入避免循环依赖
         from app.config import settings
         
-        self.file_path: Path = file_path or settings.SYSTEM_PROMPT_FILE
+        # 根据类型或路径确定文件位置
+        if file_path is not None:
+            self.file_path: Path = file_path
+        elif prompt_type is not None:
+            self.file_path: Path = self._get_path_by_type(prompt_type, settings)
+        else:
+            # 默认使用 chat 类型保持兼容
+            self.file_path: Path = settings.SYSTEM_CHAT_PROMPT_FILE
+        
         self._cache: Optional[PromptMetadata] = None
         self._encoding: str = "utf-8"
+    
+    def _get_path_by_type(self, prompt_type: str, settings) -> Path:
+        """
+        根据类型获取对应文件路径
+        
+        Args:
+            prompt_type: chat/generatesql/analyse
+            settings: 配置对象
+        
+        Returns:
+            对应的文件路径
+        """
+        type_map = {
+            "chat": settings.SYSTEM_CHAT_PROMPT_FILE,
+            "generatesql": settings.SYSTEM_GENERATESQL_PROMPT_FILE,
+            "analyse": settings.SYSTEM_ANALYSE_PROMPT_FILE,
+        }
+        
+        if prompt_type not in type_map:
+            raise ValueError(f"未知的 prompt 类型: {prompt_type}，可选: {list(type_map.keys())}")
+        
+        return type_map[prompt_type]
     
     def _read_file(self) -> str:
         """
@@ -143,34 +174,57 @@ class PromptLoader:
         return info
 
 
-# 全局单例实例
-_prompt_loader: Optional[PromptLoader] = None
+# 全局缓存，按类型存储
+_loaders: Dict[str, PromptLoader] = {}
 
 
-def get_prompt_loader(file_path: Optional[Path] = None) -> PromptLoader:
+def get_prompt_loader(prompt_type: Optional[str] = None, file_path: Optional[Path] = None) -> PromptLoader:
     """
-    获取 PromptLoader 单例
+    获取 PromptLoader 单例（按类型缓存）
     
     Args:
-        file_path: 可选，指定自定义文件路径
+        prompt_type: 可选，prompt 类型 (chat/generatesql/analyse)
+        file_path: 可选，指定自定义文件路径（优先于 type）
         
     Returns:
         PromptLoader 实例
     """
-    global _prompt_loader
+    global _loaders
     
-    if _prompt_loader is None or file_path is not None:
-        _prompt_loader = PromptLoader(file_path)
+    # 用 file_path 或 type 作为缓存 key
+    cache_key = str(file_path) if file_path is not None else (prompt_type or "default")
     
-    return _prompt_loader
+    if cache_key not in _loaders:
+        _loaders[cache_key] = PromptLoader(
+            file_path=file_path,
+            prompt_type=prompt_type
+        )
+    
+    return _loaders[cache_key]
 
 
 def get_system_prompt() -> Optional[str]:
     """
-    便捷函数：快速获取系统 Prompt
+    便捷函数：快速获取系统 Prompt（默认 chat 类型）
     
     Returns:
         系统 Prompt 内容或 None
     """
-    loader = get_prompt_loader()
+    loader = get_prompt_loader("chat")
     return loader.get_prompt()
+
+
+# 新增便捷函数
+def get_chat_prompt() -> Optional[str]:
+    """获取 chat 系统 prompt"""
+    return get_prompt_loader("chat").get_prompt()
+
+
+def get_generatesql_prompt() -> Optional[str]:
+    """获取 generatesql 系统 prompt"""
+    return get_prompt_loader("generatesql").get_prompt()
+
+
+def get_analyse_prompt() -> Optional[str]:
+    """获取 analyse 系统 prompt"""
+    return get_prompt_loader("analyse").get_prompt()
