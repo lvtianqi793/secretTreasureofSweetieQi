@@ -11,7 +11,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # 运行阶段：使用轻量的Temurin 17 JRE Alpine镜像（体积小、安全）
-FROM eclipse-temurin:17-jre-alpine
+FROM --platform=$TARGETPLATFORM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
 # 安装时区依赖，解决Java时区偏移问题（Alpine镜像默认无时区配置）
