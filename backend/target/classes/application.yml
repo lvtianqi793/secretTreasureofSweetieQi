@@ -38,7 +38,7 @@ spring:
 # AI Model Configuration (supports OpenAI-compatible APIs)
 ai:
   api:
-    base-url: http://localhost:8000
+    base-url: http://10.61.35.138:8000
     api-key:
     model: qwen3.5:2b
     timeout: 120

@@ -44,8 +44,14 @@ function resolveRequestUrl(): string {
  */
 async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   const url = resolveRequestUrl()
+  // 只发送最后一条用户消息作为问题
+  const lastUserMessage = messages.filter(m => m.role === 'user').pop()
+  if (!lastUserMessage) {
+    throw new Error('没有用户消息')
+  }
+  
   const payload = {
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    question: lastUserMessage.content
   }
 
   const res = await fetch(url, {
@@ -61,10 +67,16 @@ async function requestAssistant(messages: ChatMessage[]): Promise<string> {
 
   const ct = res.headers.get('content-type') ?? ''
   if (ct.includes('application/json')) {
-    const data = (await res.json()) as { reply?: string; message?: string; content?: string }
+    const response = (await res.json()) 
+    // 检查是否是ApiResponse格式
+    if (response.data && response.data.answer) {
+      return response.data.answer
+    }
+    // 兼容其他格式
+    const data = response as { reply?: string; message?: string; content?: string }
     const text = data.reply ?? data.message ?? data.content
     if (typeof text === 'string' && text.length > 0) return text
-    throw new Error('响应 JSON 中未找到 reply / message / content 字段')
+    throw new Error('响应 JSON 格式不正确')
   }
 
   return (await res.text()).trim() || '（空回复）'

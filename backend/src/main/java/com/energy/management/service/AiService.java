@@ -4,7 +4,6 @@ import com.energy.management.config.AiConfig;
 import com.energy.management.dto.ChatMessage;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +14,10 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * AI大模型服务 - 对接OpenAI兼容API (Ollama / 通义千问 / ChatGPT等)
+ * AI大模型服务 - 对接本地LLM三个独立接口:
+ * /generate/chat         - 运维知识问答
+ * /generate/generatesql  - 自然语言生成SQL
+ * /generate/analyse      - 数据分析
  */
 @Slf4j
 @Service
@@ -29,23 +31,39 @@ public class AiService {
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
 
     /**
-     * 发送消息到AI模型并获取回复
+     * 运维知识问答 → /generate/chat
+     */
+    public String chatOps(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/chat", prompt, history);
+    }
+
+    /**
+     * 生成SQL → /generate/generatesql
+     */
+    public String generateSql(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/generatesql", prompt, history);
+    }
+
+    /**
+     * 数据分析 → /generate/analyse
+     */
+    public String analyse(String prompt) {
+        return callAi("/generate/analyse", prompt, null);
+    }
+
+    /**
+     * 统一调用本地LLM
      *
-     * @param systemPrompt 系统提示词
-     * @param userMessage  用户消息
-     * @param history      对话历史 (可选)
+     * @param endpoint 接口路径, 如 /generate/chat
+     * @param prompt   提示词内容
+     * @param history  对话历史 (可选)
      * @return AI回复文本
      */
-    public String chat(String systemPrompt, String userMessage, List<ChatMessage> history) {
+    private String callAi(String endpoint, String prompt, List<ChatMessage> history) {
         try {
-            // 拼接prompt: 系统提示 + 历史对话 + 当前问题
+            // 如果有历史对话, 拼接到prompt前面
             StringBuilder promptBuilder = new StringBuilder();
-
-            if (systemPrompt != null && !systemPrompt.isEmpty()) {
-                promptBuilder.append("[系统指令]\n").append(systemPrompt).append("\n\n");
-            }
-
-            if (history != null) {
+            if (history != null && !history.isEmpty()) {
                 for (ChatMessage msg : history) {
                     if ("user".equals(msg.getRole())) {
                         promptBuilder.append("[用户] ").append(msg.getContent()).append("\n");
@@ -54,17 +72,16 @@ public class AiService {
                     }
                 }
             }
-
-            promptBuilder.append("[用户] ").append(userMessage).append("\n[助手] ");
+            promptBuilder.append(prompt);
 
             ObjectNode requestBody = objectMapper.createObjectNode();
             requestBody.put("prompt", promptBuilder.toString());
 
             String jsonBody = objectMapper.writeValueAsString(requestBody);
-            log.debug("AI request: {}", jsonBody.substring(0, Math.min(500, jsonBody.length())));
+            log.debug("AI request [{}]: {}", endpoint, jsonBody.substring(0, Math.min(500, jsonBody.length())));
 
             Request request = new Request.Builder()
-                    .url(aiConfig.getBaseUrl() + "/generate?Content-Type=application/json")
+                    .url(aiConfig.getBaseUrl() + endpoint)
                     .addHeader("Content-Type", "application/json")
                     .post(RequestBody.create(jsonBody, JSON_MEDIA))
                     .build();
@@ -72,18 +89,25 @@ public class AiService {
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
                     String errBody = response.body() != null ? response.body().string() : "no body";
-                    log.error("AI API error: {} - {}", response.code(), errBody);
+                    log.error("AI API error [{}]: {} - {}", endpoint, response.code(), errBody);
                     throw new RuntimeException("AI API调用失败: " + response.code() + " - " + errBody);
                 }
 
-                // 流式响应: 每行一个JSON, 拼接所有response字段直到done=true
                 String rawBody = response.body().string();
-                log.debug("AI raw response length: {}", rawBody.length());
+                log.debug("AI raw response length [{}]: {}", endpoint, rawBody.length());
 
+                // 流式响应: 每行一个JSON, 拼接所有response字段直到done=true
                 StringBuilder fullResponse = new StringBuilder();
                 for (String line : rawBody.split("\n")) {
                     line = line.trim();
                     if (line.isEmpty()) continue;
+                    // 去掉SSE的 "data: " 前缀
+                    if (line.startsWith("data: ")) {
+                        line = line.substring(6).trim();
+                    } else if (line.startsWith("data:")) {
+                        line = line.substring(5).trim();
+                    }
+                    if (line.isEmpty() || line.equals("[DONE]")) continue;
                     try {
                         JsonNode node = objectMapper.readTree(line);
                         if (node.has("response")) {
@@ -102,18 +126,12 @@ public class AiService {
                     throw new RuntimeException("AI返回内容为空, 原始响应: " + rawBody.substring(0, Math.min(200, rawBody.length())));
                 }
 
-                log.debug("AI final response: {}", result.substring(0, Math.min(200, result.length())));
+                log.debug("AI final response [{}]: {}", endpoint, result.substring(0, Math.min(200, result.length())));
                 return result;
             }
         } catch (IOException e) {
-            log.error("AI API通信异常", e);
+            log.error("AI API通信异常 [{}]", endpoint, e);
             throw new RuntimeException("AI服务通信失败: " + e.getMessage(), e);
         }
-    }
-    /**
-     * 简单对话 (无历史)
-     */
-    public String chat(String systemPrompt, String userMessage) {
-        return chat(systemPrompt, userMessage, null);
     }
 }
