@@ -2,6 +2,7 @@ package com.energy.management.service;
 
 import com.energy.management.dto.AiChatRequest;
 import com.energy.management.dto.AiChatResponse;
+import com.energy.management.dto.ChatMessage;
 import com.energy.management.util.DatabaseSchema;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,10 +20,12 @@ import java.util.regex.Pattern;
 /**
  * AI智能对话服务 - 核心业务流程:
  * 1. 接收用户自然语言问题
- * 2. 发送给AI, 获取SQL或直接回答
+ * 2. 调用 /generate/generatesql 获取SQL
  * 3. 执行SQL查询数据库
- * 4. 将查询结果发回AI进行分析
+ * 4. 调用 /generate/analyse 分析查询结果
  * 5. 返回最终结果给前端
+ *
+ * 运维知识问答: 直接调用 /generate/chat
  */
 @Slf4j
 @Service
@@ -52,12 +55,9 @@ public class AiChatService {
         log.info("收到用户问题: {}", question);
 
         try {
-            // === 第一步: 将用户问题发给AI, 判断是否需要查询数据库 ===
-            String aiFirstResponse = aiService.chat(
-                    DatabaseSchema.SQL_EXTRACTION_PROMPT,
-                    question,
-                    request.getHistory()
-            );
+            // === 第一步: 调用 /generate/generatesql 生成SQL ===
+            String sqlPrompt = DatabaseSchema.SQL_EXTRACTION_PROMPT + "\n\n用户问题: " + question;
+            String aiFirstResponse = aiService.generateSql(sqlPrompt, request.getHistory());
 
             log.debug("AI第一轮回复: {}", aiFirstResponse);
 
@@ -89,7 +89,7 @@ public class AiChatService {
             List<Map<String, Object>> queryResults = executeNativeQuery(sql);
             log.info("查询返回 {} 条记录", queryResults.size());
 
-            // === 第三步: 将查询结果发回AI进行分析 ===
+            // === 第三步: 调用 /generate/analyse 分析查询结果 ===
             String resultJson = objectMapper.writeValueAsString(queryResults);
             // 截断过长的结果 (避免超出token限制)
             if (resultJson.length() > 8000) {
@@ -101,10 +101,7 @@ public class AiChatService {
                     question, sql, resultJson
             );
 
-            String analysisResponse = aiService.chat(
-                    DatabaseSchema.OPS_SYSTEM_PROMPT,
-                    analysisPrompt
-            );
+            String analysisResponse = aiService.analyse(analysisPrompt);
 
             return new AiChatResponse(
                     analysisResponse,
@@ -116,23 +113,31 @@ public class AiChatService {
 
         } catch (Exception e) {
             log.error("AI对话处理异常", e);
-            return new AiChatResponse(
-                    "处理您的问题时遇到异常: " + e.getMessage() + "\n请尝试换一种方式提问。",
-                    false, null, null, "none"
-            );
+            // 降级: 尝试用运维知识接口直接回答
+            try {
+                String fallbackAnswer = aiService.chatOps(
+                        "用户问题: " + question + "\n\n请基于你的建筑能源运维知识直接回答, 不需要查询数据库。",
+                        null
+                );
+                return new AiChatResponse(
+                        fallbackAnswer + "\n\n(注: 数据查询暂时不可用, 以上为基于知识库的回答)",
+                        false, null, null, "none"
+                );
+            } catch (Exception fallbackEx) {
+                return new AiChatResponse(
+                        "处理您的问题时遇到异常: " + e.getMessage() + "\n请尝试换一种方式提问。",
+                        false, null, null, "none"
+                );
+            }
         }
     }
 
     /**
-     * 运维知识问答 (不涉及数据库查询, 纯知识对话)
+     * 运维知识问答 (调用 /generate/chat, 不涉及数据库查询)
      */
     public AiChatResponse opsChat(AiChatRequest request) {
         try {
-            String answer = aiService.chat(
-                    DatabaseSchema.OPS_SYSTEM_PROMPT,
-                    request.getQuestion(),
-                    request.getHistory()
-            );
+            String answer = aiService.chatOps(request.getQuestion(), request.getHistory());
             return new AiChatResponse(answer, false, null, null, "none");
         } catch (Exception e) {
             log.error("运维问答异常", e);
@@ -157,12 +162,19 @@ public class AiChatService {
                 cleaned = cleaned.substring(0, cleaned.length() - 3);
             }
             cleaned = cleaned.trim();
+
+            // 尝试提取JSON对象
+            int braceStart = cleaned.indexOf('{');
+            int braceEnd = cleaned.lastIndexOf('}');
+            if (braceStart >= 0 && braceEnd > braceStart) {
+                cleaned = cleaned.substring(braceStart, braceEnd + 1);
+            }
+
             return objectMapper.readTree(cleaned);
         } catch (Exception e) {
             log.warn("AI返回非标准JSON, 尝试兜底处理: {}", raw);
             // 兜底: 当作纯文本回答
-            ObjectMapper mapper = new ObjectMapper();
-            var node = mapper.createObjectNode();
+            var node = objectMapper.createObjectNode();
             node.put("needQuery", false);
             node.put("answer", raw);
             node.put("chartType", "none");
@@ -286,8 +298,8 @@ public class AiChatService {
             if (c == '(') depth++;
             else if (c == ')') depth--;
             else if (depth == 0 && upperSql.startsWith("FROM", i)
-                     && (i == 0 || !Character.isLetterOrDigit(upperSql.charAt(i - 1)))
-                     && (i + 4 >= upperSql.length() || !Character.isLetterOrDigit(upperSql.charAt(i + 4)))) {
+                    && (i == 0 || !Character.isLetterOrDigit(upperSql.charAt(i - 1)))
+                    && (i + 4 >= upperSql.length() || !Character.isLetterOrDigit(upperSql.charAt(i + 4)))) {
                 return i;
             }
         }
