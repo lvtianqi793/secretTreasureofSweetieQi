@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import MarkdownMessage from './MarkdownMessage.vue'
 
 type Role = 'user' | 'assistant'
 
@@ -52,6 +53,8 @@ async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   
   const payload = {
     question: lastUserMessage.content
+  const payload = {
+    messages: messages.map((m) => ({ role: m.role, content: m.content })),
   }
 
   const res = await fetch(url, {
@@ -77,6 +80,10 @@ async function requestAssistant(messages: ChatMessage[]): Promise<string> {
     const text = data.reply ?? data.message ?? data.content
     if (typeof text === 'string' && text.length > 0) return text
     throw new Error('响应 JSON 格式不正确')
+    const data = (await res.json()) as { reply?: string; message?: string; content?: string }
+    const text = data.reply ?? data.message ?? data.content
+    if (typeof text === 'string' && text.length > 0) return text
+    throw new Error('响应 JSON 中未找到 reply / message / content 字段')
   }
 
   return (await res.text()).trim() || '（空回复）'
@@ -190,6 +197,7 @@ function onKeyDown(e: KeyboardEvent) {
         >
           <span class="ai-bubble__label">{{ m.role === 'user' ? '我' : 'AI' }}</span>
           <div class="ai-bubble__text">{{ m.content }}</div>
+          <MarkdownMessage class="ai-bubble__text" :content="m.content" />
         </div>
         <div v-if="loading" class="ai-bubble ai-bubble--assistant ai-bubble--pending">
           <span class="ai-bubble__label">AI</span>
