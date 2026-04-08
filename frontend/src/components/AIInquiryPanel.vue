@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import MarkdownMessage from './MarkdownMessage.vue'
+import CsvImportPanel from './CsvImportPanel.vue'
 
 type Role = 'user' | 'assistant'
 
@@ -45,15 +46,10 @@ function resolveRequestUrl(): string {
  */
 async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   const url = resolveRequestUrl()
-  // 只发送最后一条用户消息作为问题
-  const lastUserMessage = messages.filter(m => m.role === 'user').pop()
-  if (!lastUserMessage) {
-    throw new Error('没有用户消息')
-  }
-  
+  // 兼容不同后端：既支持 messages，也支持 question
+  const lastUserMessage = messages.filter((m) => m.role === 'user').at(-1)
   const payload = {
-    question: lastUserMessage.content
-  const payload = {
+    question: lastUserMessage?.content ?? '',
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
   }
 
@@ -70,20 +66,16 @@ async function requestAssistant(messages: ChatMessage[]): Promise<string> {
 
   const ct = res.headers.get('content-type') ?? ''
   if (ct.includes('application/json')) {
-    const response = (await res.json()) 
-    // 检查是否是ApiResponse格式
-    if (response.data && response.data.answer) {
+    const response = (await res.json()) as any
+
+    if (typeof response?.data?.answer === 'string' && response.data.answer.length > 0) {
       return response.data.answer
     }
-    // 兼容其他格式
+
     const data = response as { reply?: string; message?: string; content?: string }
     const text = data.reply ?? data.message ?? data.content
     if (typeof text === 'string' && text.length > 0) return text
-    throw new Error('响应 JSON 格式不正确')
-    const data = (await res.json()) as { reply?: string; message?: string; content?: string }
-    const text = data.reply ?? data.message ?? data.content
-    if (typeof text === 'string' && text.length > 0) return text
-    throw new Error('响应 JSON 中未找到 reply / message / content 字段')
+    throw new Error('响应 JSON 中未找到 answer / reply / message / content 字段')
   }
 
   return (await res.text()).trim() || '（空回复）'
@@ -93,6 +85,7 @@ const input = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const listRef = ref<HTMLDivElement | null>(null)
+const csvOpen = ref(false)
 
 const activeMessages = computed(() => (mode.value === 'kb' ? messagesKb.value : messagesDb.value))
 
@@ -157,6 +150,7 @@ function onKeyDown(e: KeyboardEvent) {
     <header class="ai-panel__header">
       <div class="ai-panel__header-top">
         <h1 class="ai-panel__title">AI 问答</h1>
+        <button type="button" class="ai-panel__action" @click="csvOpen = true">CSV 导入</button>
         <div class="ai-mode-switch" role="tablist" aria-label="问答模式">
           <button
             type="button"
@@ -247,5 +241,18 @@ function onKeyDown(e: KeyboardEvent) {
         </button>
       </div>
     </footer>
+
+    <div v-if="csvOpen" class="csv-modal" role="dialog" aria-modal="true" aria-label="CSV 导入">
+      <div class="csv-modal__backdrop" @click="csvOpen = false" />
+      <div class="csv-modal__panel">
+        <div class="csv-modal__top">
+          <div class="csv-modal__title">CSV 导入</div>
+          <button type="button" class="csv-modal__close" @click="csvOpen = false">关闭</button>
+        </div>
+        <div class="csv-modal__content">
+          <CsvImportPanel />
+        </div>
+      </div>
+    </div>
   </section>
 </template>
