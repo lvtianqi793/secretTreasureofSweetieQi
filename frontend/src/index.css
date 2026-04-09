@@ -102,7 +102,7 @@ body {
 
 .csv-grid {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: 1fr;
   gap: 0.75rem;
   align-items: end;
 }
@@ -477,6 +477,57 @@ body {
   color: var(--muted);
   font-size: 0.9375rem;
   padding: 2rem;
+}
+
+.ai-search-dock {
+  position: relative;
+}
+
+.ai-quick-questions--dock {
+  position: absolute;
+  left: 1rem;
+  bottom: calc(100% + 0.45rem);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.4rem;
+  width: min(560px, calc(100% - 2rem));
+  pointer-events: auto;
+}
+
+.ai-quick-questions__item {
+  max-width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.12);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  cursor: pointer;
+  transition:
+    transform 0.1s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.ai-quick-questions__item:hover {
+  background: rgba(36, 48, 68, 0.35);
+  border-color: rgba(91, 159, 212, 0.45);
+}
+
+.ai-quick-questions__item:active {
+  transform: scale(0.98);
+}
+
+.ai-quick-questions__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: rgba(91, 159, 212, 0.55);
 }
 
 .ai-bubble {

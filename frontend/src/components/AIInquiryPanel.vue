@@ -89,6 +89,33 @@ const csvOpen = ref(false)
 
 const activeMessages = computed(() => (mode.value === 'kb' ? messagesKb.value : messagesDb.value))
 
+const quickQuestionsOps = [
+  '查询今天各车间/产线的能耗汇总（电/水/气）',
+  '查询某设备近 24 小时能耗曲线，并给出峰值时段',
+  '某设备当前运行状态是什么？最近一次告警是什么？',
+  '分析本周能耗异常的可能原因，并给出排查步骤',
+  '对比本月与上月能耗变化，定位主要增量来源',
+  '给出节能优化建议：优先级、预估收益、风险点',
+] as const
+
+const quickQuestionsDb = [
+  '查询今天总能耗、同比/环比变化',
+  '按设备统计本周能耗 TOP10',
+  '找出近 7 天能耗异常的设备与发生时间',
+  '统计各区域今日峰谷用电量与峰谷比',
+] as const
+
+const quickQuestionsTop3 = computed(() =>
+  (mode.value === 'kb' ? quickQuestionsOps : quickQuestionsDb).slice(0, 3),
+)
+
+function sendQuickQuestion(q: string) {
+  if (loading.value) return
+  error.value = null
+  input.value = q
+  void nextTick(() => send())
+}
+
 function scrollBottom() {
   const el = listRef.value
   if (el) el.scrollTop = el.scrollHeight
@@ -190,7 +217,6 @@ function onKeyDown(e: KeyboardEvent) {
           :data-role="m.role"
         >
           <span class="ai-bubble__label">{{ m.role === 'user' ? '我' : 'AI' }}</span>
-          <div class="ai-bubble__text">{{ m.content }}</div>
           <MarkdownMessage class="ai-bubble__text" :content="m.content" />
         </div>
         <div v-if="loading" class="ai-bubble ai-bubble--assistant ai-bubble--pending">
@@ -209,6 +235,21 @@ function onKeyDown(e: KeyboardEvent) {
     </div>
 
     <footer class="ai-search-dock">
+      <div
+        v-if="!loading"
+        class="ai-quick-questions ai-quick-questions--dock"
+        aria-label="快捷问题"
+      >
+        <button
+          v-for="q in quickQuestionsTop3"
+          :key="q"
+          type="button"
+          class="ai-quick-questions__item"
+          @click="sendQuickQuestion(q)"
+        >
+          {{ q }}
+        </button>
+      </div>
       <div class="ai-search-box">
         <span class="ai-search-box__icon" aria-hidden="true">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
