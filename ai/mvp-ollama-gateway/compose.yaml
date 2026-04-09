@@ -22,6 +22,10 @@ services:
       - SYSTEM_CHAT_PROMPT_FILE=./prompts/system_chat_prompt.txt
       - SYSTEM_GENERATESQL_PROMPT_FILE=./prompts/system_generatesql_prompt.txt
       - SYSTEM_ANALYSE_PROMPT_FILE=./prompts/system_analyse_prompt.txt
+      - RAGFLOW_ENABLED=true
+      - RAGFLOW_BASE_URL=http://ragflow:9380
+      - RAGFLOW_API_KEY=ragflow-api-key-here
+      - RAGFLOW_CHAT_ID=your-conversation-id-here
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to
