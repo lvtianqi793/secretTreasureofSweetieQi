@@ -15,7 +15,7 @@ from app.config import settings
 class RagflowClient:
     """
     RAGFlow HTTP 客户端
-    封装与 RAGFlow /api/conversation/chat 端点的通信
+    封装与 RAGFlow /api/v1/chats/{chat_id}/completions 端点的通信
     返回格式统一转换为 Ollama 风格，保持前端兼容
     """
     
@@ -23,7 +23,8 @@ class RagflowClient:
         self.base_url = settings.RAGFLOW_BASE_URL.rstrip("/")
         self.api_key = settings.RAGFLOW_API_KEY
         self.chat_id = settings.RAGFLOW_CHAT_ID
-        self.chat_endpoint = f"{self.base_url}/api/v1/chat/completions"
+        # 关键修复：修正端点路径，添加 chats/ 和 chat_id
+        self.chat_endpoint = f"{self.base_url}/api/v1/chats/{self.chat_id}/completions"
         self.timeout = httpx.Timeout(60.0, connect=10.0)
     
     def _build_headers(self) -> Dict[str, str]:
@@ -53,12 +54,11 @@ class RagflowClient:
         Returns:
             RAGFlow 请求体字典
         """
+        # 关键修复：RAGFlow 原生 API 使用 question 字段，不是 messages 数组
         return {
-            "conversation_id": self.chat_id,
-            "messages": [
-                {"role": "user", "content": user_prompt}
-            ],
-            "stream": stream
+            "question": user_prompt,
+            "stream": stream,
+            "quote": True  # 启用引用返回
         }
     
     def _transform_response(self, ragflow_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -94,8 +94,8 @@ class RagflowClient:
         }
     
     async def generate_stream(
-    self,
-    user_prompt: str
+        self,
+        user_prompt: str
     ) -> AsyncGenerator[str, None]:
         """
         流式生成文本，产生 SSE 格式的数据块（Ollama 兼容格式）
@@ -133,7 +133,7 @@ class RagflowClient:
                     elif response.status_code == 404:
                         raise HTTPException(
                             status_code=status.HTTP_404_NOT_FOUND,
-                            detail="RAGFlow conversation not found"
+                            detail="RAGFlow chat not found"
                         )
                     
                     response.raise_for_status()
@@ -145,7 +145,6 @@ class RagflowClient:
                         
                         # RAGFlow SSE 格式：data: {json} 或 data: [DONE]
                         if not line.startswith("data: "):
-                            # 不符合规范的行，记录但忽略（保持健壮性）
                             continue
                         
                         data_content = line[6:]  # 去掉 "data: " 前缀
@@ -158,23 +157,21 @@ class RagflowClient:
                         # 解析 JSON 数据块
                         try:
                             chunk_data = json.loads(data_content)
-                        except json.JSONDecodeError as e:
-                            # 解析失败时发送错误信息并终止流
-                            error_msg = f"解析 RAGFlow 响应失败: {data_content[:100]}"
-                            yield f"data: {json.dumps({'error': error_msg})}\n\n"
-                            break
+                        except json.JSONDecodeError:
+                            continue
                         
-                        # 转换为 Ollama 兼容格式
-                        # RAGFlow 流式块通常包含 answer 字段（增量或完整文本）
-                        answer = chunk_data.get("answer", "")
-                        # 某些版本可能将 answer 嵌套在 data 字段中
-                        if not answer and "data" in chunk_data:
-                            answer = chunk_data.get("data", {}).get("answer", "")
-                        
-                        # 判断是否为最后一个块（根据 RAGFlow 特定字段）
-                        is_end = chunk_data.get("is_end", False)
-                        if "data" in chunk_data and isinstance(chunk_data["data"], dict):
-                            is_end = chunk_data["data"].get("is_end", is_end)
+                        # 关键修复：适配 RAGFlow 实际响应结构
+                        # RAGFlow 流式返回结构：{"data": {"answer": "...", "is_end": true/false}}
+                        data_field = chunk_data.get("data", {})
+                        if isinstance(data_field, dict):
+                            answer = data_field.get("answer", "")
+                            is_end = data_field.get("is_end", False)
+                            reference = data_field.get("reference")
+                        else:
+                            # 兼容其他可能的格式
+                            answer = chunk_data.get("answer", "")
+                            is_end = chunk_data.get("is_end", False)
+                            reference = chunk_data.get("reference")
                         
                         transformed = {
                             "response": answer,
@@ -182,10 +179,6 @@ class RagflowClient:
                             "model": "ragflow"
                         }
                         
-                        # 保留引用信息（如果存在）
-                        reference = chunk_data.get("reference")
-                        if not reference and "data" in chunk_data:
-                            reference = chunk_data.get("data", {}).get("reference")
                         if reference:
                             transformed["ragflow_reference"] = reference
                         
@@ -240,7 +233,7 @@ class RagflowClient:
                 elif response.status_code == 404:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail="RAGFlow conversation not found"
+                        detail="RAGFlow chat not found"
                     )
                 
                 response.raise_for_status()
@@ -272,10 +265,9 @@ class RagflowClient:
             是否连接成功
         """
         try:
-            # RAGFlow 没有专门的 health 端点，用简单请求验证
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 response = await client.get(
-                    f"{self.base_url}/api/v1/conversations",
+                    f"{self.base_url}/api/v1/chats",
                     headers=self._build_headers(),
                     params={"page": 1, "page_size": 1}
                 )
