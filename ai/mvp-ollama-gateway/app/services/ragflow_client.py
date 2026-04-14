@@ -11,6 +11,9 @@ import httpx
 from fastapi import HTTPException, status
 from app.config import settings
 
+class RagflowNoDocumentsException(Exception):
+    """RAGFlow 未检索到相关文档的异常，用于触发降级到 Ollama"""
+    pass
 
 class RagflowClient:
     """
@@ -93,6 +96,48 @@ class RagflowClient:
             "ragflow_reference": data.get("reference", {})  # 保留 RAGFlow 特有信息
         }
     
+    def _is_no_documents_response(self, answer: str, reference: Optional[Dict]) -> bool:
+        """
+        判断是否未检索到相关文档
+        
+        检测逻辑：
+        1. reference 为空或 None
+        2. answer 包含常见\"未找到\"提示词
+        """
+        # 检查引用是否为空
+        if not reference:
+            return True
+        
+        # 检查引用内容（RAGFlow reference 结构可能包含 chunks 或 doc_aggs）
+        has_chunks = False
+        if isinstance(reference, dict):
+            chunks = reference.get("chunks", [])
+            doc_aggs = reference.get("doc_aggs", [])
+            total_tokens = reference.get("total_tokens", 0)
+
+            if chunks or doc_aggs or total_tokens > 0:
+                has_chunks = True
+        
+        if not has_chunks:
+            return True
+        
+        # 检查 answer 是否包含\"未找到\"提示（可选，根据实际 RAGFlow 提示词调整）
+        no_doc_keywords = [
+            "根据已知信息无法回答",
+            "我没有找到相关信息",
+            "抱歉，我不知道",
+            "无法从给定信息中找到答案",
+            "no relevant information found",
+            "don't have enough information",
+        ]
+        
+        answer_lower = answer.lower()
+        for keyword in no_doc_keywords:
+            if keyword.lower() in answer_lower:
+                return True
+        
+        return False
+    
     async def generate_stream(
         self,
         user_prompt: str
@@ -100,18 +145,7 @@ class RagflowClient:
         """
         流式生成文本，产生 SSE 格式的数据块（Ollama 兼容格式）
         
-        RAGFlow SSE 规范：
-        - 每条消息以 data: 开头，后跟 JSON 字符串
-        - 流结束时发送 data: [DONE]
-        
-        Args:
-            user_prompt: 用户输入的提示词
-            
-        Yields:
-            SSE 格式的字符串，如 "data: {...}\n\n"
-            
-        Raises:
-            HTTPException: RAGFlow 错误或连接失败
+        如果未检索到文档，抛出 RagflowNoDocumentsException 触发降级
         """
         body = self._build_request_body(user_prompt, stream=True)
         headers = self._build_headers()
@@ -138,6 +172,10 @@ class RagflowClient:
                     
                     response.raise_for_status()
                     
+                    full_answer = ""
+                    full_reference = None
+                    is_empty_retrieval = False
+
                     # 逐行读取 SSE 流
                     async for line in response.aiter_lines():
                         if not line:
@@ -151,6 +189,10 @@ class RagflowClient:
                         
                         # 检查流结束标志
                         if data_content == "[DONE]":
+                            # 流结束前检查是否未检索到文档
+                            if self._is_no_documents_response(full_answer, full_reference):
+                                is_empty_retrieval = True
+                                break
                             yield "data: [DONE]\n\n"
                             break
                         
@@ -173,6 +215,11 @@ class RagflowClient:
                             is_end = chunk_data.get("is_end", False)
                             reference = chunk_data.get("reference")
                         
+                        # 累积内容用于最后检查
+                        full_answer += answer
+                        if reference:
+                            full_reference = reference
+
                         transformed = {
                             "response": answer,
                             "done": is_end,
@@ -187,9 +234,17 @@ class RagflowClient:
                         
                         # 如果标记为结束，发送结束标志并退出
                         if is_end:
+                            # 检查是否未检索到文档
+                            if self._is_no_documents_response(full_answer, full_reference):
+                                is_empty_retrieval = True
+                                break
                             yield "data: [DONE]\n\n"
                             break
                             
+                    # 如果未检索到文档，抛出异常触发降级
+                    if is_empty_retrieval:
+                        raise RagflowNoDocumentsException(f"RAGFlow 未检索到相关文档，answer: {full_answer[:100]}...") 
+
         except httpx.HTTPStatusError as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -321,3 +376,6 @@ async def generate_ragflow_stream(user_prompt: str) -> AsyncGenerator[str, None]
     
     async for chunk in client.generate_stream(user_prompt):
         yield chunk
+
+# 在文件底部导出异常类
+__all__ = ['RagflowClient', 'get_ragflow_client', 'generate_ragflow_stream', 'RagflowNoDocumentsException']

@@ -17,7 +17,7 @@ from app.config import settings
 from app.models.request import ChatRequest, ErrorResponse, HealthResponse
 from app.services.prompt_loader import get_prompt_loader
 from app.services.ollama_client import get_ollama_client
-from app.services.ragflow_client import get_ragflow_client
+from app.services.ragflow_client import get_ragflow_client, RagflowNoDocumentsException
 
 
 # 配置日志
@@ -230,6 +230,55 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
             if chunk_count == 0:
                 yield f"data: {json.dumps({'error': 'No response from RAGFlow', 'done': True})}\n\n"
                 
+        except RagflowNoDocumentsException as e:
+            # 关键修改：未检索到文档，降级到 Ollama
+            logger.warning(f"[{prompt_type}] RAGFlow 未检索到文档，降级到 Ollama: {e}")
+            # 获取 analyse 系统 prompt
+            loader = get_prompt_loader("analyse")
+            system_prompt = loader.get_prompt()
+            
+            if not system_prompt:
+                logger.error(f"[{prompt_type}] analyse 系统 prompt 加载失败，无法降级")
+                error_data = {
+                    "error": "RAGFlow 未检索到文档，且 analyse 系统 prompt 未配置",
+                    "error_type": "RagflowNoDocumentsAndNoFallback",
+                    "done": True
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+                return
+            
+            # 获取 Ollama 客户端并检查连接
+            ollama_client = get_ollama_client()
+            if not await ollama_client.check_connection():
+                logger.error("Ollama 服务不可用，无法降级")
+                error_data = {
+                    "error": "RAGFlow 未检索到文档，且 Ollama 服务不可用",
+                    "error_type": "RagflowNoDocumentsAndOllamaUnavailable",
+                    "done": True
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+                return
+            
+            # 使用 Ollama 生成，使用 analyse 系统 prompt
+            logger.info(f"[{prompt_type}] 开始使用 Ollama 降级生成，使用 analyse 系统 prompt")
+            
+            options: Dict[str, Any] = {}
+            if request.temperature is not None:
+                options["temperature"] = request.temperature
+            
+            fallback_chunk_count = 0
+            async for chunk in ollama_client.generate_stream(
+                user_prompt=request.prompt,
+                model=request.model,
+                system_prompt=system_prompt,  # 使用 analyse 系统 prompt
+                options=options if options else None,
+                think=False
+            ):
+                yield chunk
+                fallback_chunk_count += 1
+            
+            logger.info(f"[{prompt_type}] Ollama 降级流式响应完成，共 {fallback_chunk_count} 个 chunk")
+                           
         except Exception as e:
             logger.error(f"[{prompt_type}] RAGFlow 流式生成异常: {e}")
             error_data = {
@@ -343,20 +392,6 @@ async def generate_analyse(request: ChatRequest):
     - RAGFLOW_ENABLED=false → 使用 Ollama + analyse 系统 prompt
     """
     return await generate_with_type(request, "analyse")
-
-
-# 保留旧接口兼容（可选，可删除）
-@app.post(
-    "/generate",
-    response_class=StreamingResponse,
-    summary="流式生成文本（兼容旧接口）",
-    description="默认使用 chat 系统 prompt",
-    deprecated=True  # 标记为已弃用
-)
-async def generate(request: ChatRequest):
-    """兼容旧接口，默认使用 chat"""
-    return await generate_with_type(request, "chat")
-
 
 @app.get(
     "/health",
