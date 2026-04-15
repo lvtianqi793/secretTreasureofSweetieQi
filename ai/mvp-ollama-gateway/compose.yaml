@@ -25,7 +25,7 @@ services:
       - RAGFLOW_ENABLED=true
       - RAGFLOW_BASE_URL=http://docker-ragflow-cpu-1:9380
       - RAGFLOW_API_KEY=ragflow-KsoVCRYf6PH3XsmEdRpd55VvyvXX4X9VIklMeSx_Nlg
-      - RAGFLOW_CHAT_ID=caa9917c37ee11f1969de17d65fa2a84
+      - RAGFLOW_CHAT_ID=3cdc8cd4358a11f1abefd962d5631214
     networks:
       - docker_ragflow
 

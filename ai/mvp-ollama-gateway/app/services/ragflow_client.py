@@ -4,14 +4,15 @@ RAGFlow 客户端服务
 负责与 RAGFlow API 通信，支持流式输出
 将 RAGFlow 返回格式转换为 Ollama 兼容格式
 """
-import logging
+
 import json
+import logging
 from typing import AsyncGenerator, Optional, Dict, Any
 import httpx
 from fastapi import HTTPException, status
 from app.config import settings
 
-
+# 添加这行
 logger = logging.getLogger(__name__)
 
 class RagflowNoDocumentsException(Exception):
@@ -30,7 +31,7 @@ class RagflowClient:
         self.api_key = settings.RAGFLOW_API_KEY
         self.chat_id = settings.RAGFLOW_CHAT_ID
         # 关键修复：修正端点路径，添加 chats/ 和 chat_id
-        self.chat_endpoint = f"{self.base_url}/api/v1/agents/{self.chat_id}/completions"
+        self.chat_endpoint = f"{self.base_url}/api/v1/chats/{self.chat_id}/completions"
         self.timeout = httpx.Timeout(60.0, connect=10.0)
     
     def _build_headers(self) -> Dict[str, str]:
@@ -100,11 +101,31 @@ class RagflowClient:
         }
     
     def _is_no_documents_response(self, answer: str, reference: Optional[Dict]) -> bool:
-        # Agent 模式下，如果没有 agent_0 输出，或者 answer 为空
-        if not answer or answer.strip() == "":
+        """
+        判断是否未检索到相关文档
+        
+        检测逻辑：
+        1. reference 为空或 None
+        2. answer 包含常见\"未找到\"提示词
+        """
+        # 检查引用是否为空
+        if not reference or reference == {}:
             return True
         
-        # 检查常见的无答案提示
+        # 检查引用内容（RAGFlow reference 结构可能包含 chunks 或 doc_aggs）
+        has_chunks = False
+        if isinstance(reference, dict):
+            chunks = reference.get("chunks", [])
+            doc_aggs = reference.get("doc_aggs", [])
+            total_tokens = reference.get("total_tokens", 0)
+
+            if chunks or doc_aggs or total_tokens > 0:
+                has_chunks = True
+        
+        if not has_chunks:
+            return True
+        
+        # 检查 answer 是否包含\"未找到\"提示（可选，根据实际 RAGFlow 提示词调整）
         no_doc_keywords = [
             "根据已知信息无法回答",
             "我没有找到相关信息",
@@ -112,8 +133,6 @@ class RagflowClient:
             "无法从给定信息中找到答案",
             "no relevant information found",
             "don't have enough information",
-            "I don't know",
-            "I couldn't find",
         ]
         
         answer_lower = answer.lower()
@@ -127,6 +146,11 @@ class RagflowClient:
         self,
         user_prompt: str
     ) -> AsyncGenerator[str, None]:
+        """
+        流式生成文本，产生 SSE 格式的数据块（Ollama 兼容格式）
+        
+        如果未检索到文档，抛出 RagflowNoDocumentsException 触发降级
+        """
         body = self._build_request_body(user_prompt, stream=True)
         headers = self._build_headers()
         
@@ -134,69 +158,107 @@ class RagflowClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
                     "POST",
-                    self.chat_endpoint,  # 注意：现在是 agents/{id}/completions
+                    self.chat_endpoint,
                     json=body,
                     headers=headers
                 ) as response:
+                    # RAGFlow 错误处理
+                    if response.status_code == 401:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="RAGFlow API key invalid"
+                        )
+                    elif response.status_code == 404:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="RAGFlow chat not found"
+                        )
+                    
                     response.raise_for_status()
                     
                     full_answer = ""
-                    has_agent_output = False
-                    
+                    full_reference = None
+                    is_empty_retrieval = False
+                    chunk_count = 0
+                    WELCOME_KEYWORDS = ["hi!", "hello", "i'm your", "assistant", "what can I do"]
+
+                    # 逐行读取 SSE 流
                     async for line in response.aiter_lines():
-                        if not line or not line.startswith("data:"):
+                        logger.info(f"RAGFlow raw line: {line}")  # 加这行
+                        if not line:
                             continue
                         
-                        data_content = line[5:]  # 去掉 "data:"
+                        # RAGFlow SSE 格式：data: {json} 或 data: [DONE]
+                        if not line.startswith("data:"):
+                            continue
                         
-                        if data_content == "true":  # 结束标志
-                            if not has_agent_output:
-                                # 没有 agent 输出，触发降级
-                                raise RagflowNoDocumentsException("RAGFlow Agent 未生成有效回答")
+                        data_content = line[5:]  # 去掉 "data: " 前缀
+                        
+                        # 检查流结束标志
+                        if data_content == "true" or data_content == "[DONE]":
+                            # 检查是否未检索到文档
+                            if self._is_no_documents_response(full_answer, full_reference):
+                                is_empty_retrieval = True
+                                break
                             yield "data: [DONE]\n\n"
                             break
                         
+                        # 解析 JSON 数据块
                         try:
                             chunk_data = json.loads(data_content)
                         except json.JSONDecodeError:
                             continue
                         
-                        # Agent 模式：解析 node_finished 事件
-                        if chunk_data.get("event") == "node_finished":
-                            node_data = chunk_data.get("data", {})
-                            component_name = node_data.get("component_name", "")
-                            outputs = node_data.get("outputs", {})
-                            
-                            # 从 agent_0 节点提取答案
-                            if component_name == "Agent_0" and outputs:
-                                logger.info(f"Agent outputs: {json.dumps(outputs, ensure_ascii=False)}")  # 加这行
-                                has_agent_output = True
-                                # 尝试从多个可能的字段提取答案
-                                answer = (
-                                    outputs.get("answer") or 
-                                    outputs.get("content") or
-                                    outputs.get("formalized_content") or
-                                    str(outputs)  # 兜底：直接转字符串
-                                )
-                                
-                                if answer:
-                                    full_answer += answer
-                                    
-                                    transformed = {
-                                        "response": answer,
-                                        "done": False,
-                                        "model": "ragflow",
-                                        "ragflow_reference": outputs  # 保留完整输出
-                                    }
-                                    yield f"data: {json.dumps(transformed, ensure_ascii=False)}\n\n"
-                    
-                    # 流结束，发送最终标记
-                    if has_agent_output:
-                        yield f"data: {json.dumps({'response': '', 'done': True, 'model': 'ragflow'}, ensure_ascii=False)}\n\n"
-                    else:
-                        # 没有有效输出，触发降级
-                        raise RagflowNoDocumentsException("RAGFlow Agent 未生成有效回答")
+                        # 关键修复：适配 RAGFlow 实际响应结构
+                        # RAGFlow 流式返回结构：{"data": {"answer": "...", "is_end": true/false}}
+                        data_field = chunk_data.get("data", {})
+                        if isinstance(data_field, dict):
+                            answer = data_field.get("answer", "")
+                            is_end = data_field.get("is_end", False)
+                            reference = data_field.get("reference")
+                        else:
+                            # 兼容其他可能的格式
+                            answer = chunk_data.get("answer", "")
+                            is_end = chunk_data.get("is_end", False)
+                            reference = chunk_data.get("reference")
                         
+                        chunk_count += 1
+                        answer_lower = answer.lower()
+                        is_welcome = any(keyword in answer_lower for keyword in WELCOME_KEYWORDS)
+                        
+                        if is_welcome and chunk_count <= 2:
+                            continue
+
+                        # 累积内容用于最后检查
+                        full_answer += answer
+                        if reference:
+                            full_reference = reference
+
+                        transformed = {
+                            "response": answer,
+                            "done": is_end,
+                            "model": "ragflow"
+                        }
+                        
+                        if reference:
+                            transformed["ragflow_reference"] = reference
+                        
+                        # 输出 SSE 块
+                        yield f"data: {json.dumps(transformed, ensure_ascii=False)}\n\n"
+                        
+                        # 如果标记为结束，发送结束标志并退出
+                        if is_end:
+                            # 检查是否未检索到文档
+                            if self._is_no_documents_response(full_answer, full_reference):
+                                is_empty_retrieval = True
+                                break
+                            yield "data: [DONE]\n\n"
+                            break
+                            
+                    # 如果未检索到文档，抛出异常触发降级
+                    if is_empty_retrieval:
+                        raise RagflowNoDocumentsException(f"RAGFlow 未检索到相关文档，answer: {full_answer[:100]}...") 
+
         except httpx.HTTPStatusError as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
