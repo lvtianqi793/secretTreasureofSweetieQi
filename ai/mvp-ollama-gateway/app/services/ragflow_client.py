@@ -85,6 +85,17 @@ class RagflowClient:
         Returns:
             Ollama 风格的响应字典
         """
+        # 检查输入是否为字典类型，避免布尔值错误
+        if not isinstance(ragflow_data, dict):
+            logger.warning(f"Received non-dict response from RAGFlow: {ragflow_data}")
+            # 返回空的响应，让调用方处理
+            return {
+                "response": "",
+                "done": False,
+                "model": "ragflow",
+                "ragflow_reference": {}
+            }
+        
         # 检查 RAGFlow 错误码
         if ragflow_data.get("code", 0) != 0:
             error_msg = ragflow_data.get("message", "Unknown RAGFlow error")
