@@ -96,6 +96,10 @@ class RagflowClient:
         data = ragflow_data.get("data", {})
         answer = data.get("answer", "")
         
+        # 删除 [ID:x] 格式的文本
+        import re
+        answer = re.sub(r'\[ID:\d+\]', '', answer)
+        
         # 构造 Ollama 兼容格式
         return {
             "response": answer,
@@ -281,60 +285,6 @@ class RagflowClient:
                     if is_empty_retrieval:
                         raise RagflowNoDocumentsException(f"RAGFlow 未检索到相关文档，answer: {full_answer[:100]}...")
                         
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"RAGFlow HTTP error: {e.response.status_code}"
-            )
-        except httpx.ConnectError:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="RAGFlow service unavailable"
-            )
-    
-    async def generate(
-        self,
-        user_prompt: str
-    ) -> Dict[str, Any]:
-        """
-        非流式生成，等待完整响应后返回（Ollama 兼容格式）
-        
-        Args:
-            user_prompt: 用户输入的提示词
-            
-        Returns:
-            完整的 Ollama 风格响应字典
-        """
-        body = self._build_request_body(user_prompt, stream=False)
-        headers = self._build_headers()
-        
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    self.chat_endpoint,
-                    json=body,
-                    headers=headers
-                )
-                
-                if response.status_code == 401:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="RAGFlow API key invalid"
-                    )
-                elif response.status_code == 404:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="RAGFlow chat not found"
-                    )
-                
-                response.raise_for_status()
-                ragflow_data = response.json()
-                
-                # 转换为 Ollama 格式并标记完成
-                transformed = self._transform_response(ragflow_data)
-                transformed["done"] = True
-                return transformed
-                
         except httpx.HTTPStatusError as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
