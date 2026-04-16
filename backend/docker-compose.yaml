@@ -3,13 +3,13 @@ services:
   # Spring Boot后端服务
   energy-backend:
     build:
-      context: .          # 指向Dockerfile所在的backend目录
-      dockerfile: Dockerfile      # 指定Dockerfile文件名
+      context: . # 指向Dockerfile所在的backend目录
+      dockerfile: Dockerfile # 指定Dockerfile文件名
     ports:
-      - "8080:8080"               # 宿主机端口:容器内端口
+      - "8080:8080" # 宿主机端口:容器内端口
     environment:
-      # 数据库连接配置（与postgres-db服务名、环境变量对应）
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/energy_management
+      # 数据库连接配置（使用服务名而不是localhost）
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/energy_management
       - SPRING_DATASOURCE_USERNAME=postgres
       - SPRING_DATASOURCE_PASSWORD=ltqltq2005
       # JPA配置
@@ -18,24 +18,33 @@ services:
       - SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL=true
       # 时区配置
       - TZ=Asia/Shanghai
-    restart: always               # 容器异常退出时自动重启
+    restart: always # 容器异常退出时自动重启
     depends_on:
-      - postgres-db               # 先启动数据库，再启动后端
+      - postgres-db # 先启动数据库，再启动后端
+    networks:
+      - energy-network
 
   # PostgreSQL数据库服务
   postgres-db:
-    image: postgres:15-alpine     # 稳定的PostgreSQL Alpine镜像
+    image: postgres:15-alpine # 稳定的PostgreSQL Alpine镜像
     ports:
-      - "5432:5432"               # 宿主机数据库端口映射
+      - "5432:5432" # 宿主机数据库端口映射
     environment:
-      - POSTGRES_USER=postgres       # 数据库用户名
-      - POSTGRES_PASSWORD=ltqltq2005    # 数据库密码
-      - POSTGRES_DB=energy_management          # 初始化创建的数据库名
-      - TZ=Asia/Shanghai                 # 数据库时区
+      - POSTGRES_USER=postgres # 数据库用户名
+      - POSTGRES_PASSWORD=ltqltq2005 # 数据库密码
+      - POSTGRES_DB=energy_management # 初始化创建的数据库名
+      - TZ=Asia/Shanghai # 数据库时区
     volumes:
-      - postgres-data:/var/lib/postgresql/data  # 持久化数据库数据（容器删除后数据不丢失）
-    restart: always                   # 数据库异常退出时自动重启
+      - postgres-data:/var/lib/postgresql/data # 持久化数据库数据（容器删除后数据不丢失）
+    restart: always # 数据库异常退出时自动重启
+    networks:
+      - energy-network
 
 # 数据卷：持久化PostgreSQL数据
 volumes:
   postgres-data:
+
+# 自定义网络：容器间通信
+networks:
+  energy-network:
+    driver: bridge
