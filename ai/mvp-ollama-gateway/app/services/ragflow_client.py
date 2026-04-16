@@ -66,7 +66,7 @@ class RagflowClient:
         body = {
         "question": user_prompt,
         "stream": stream,
-        "quote": True
+        "quote": False
         }
         if session_id:
             body["session_id"] = session_id  # 带上会话ID
@@ -95,10 +95,6 @@ class RagflowClient:
         
         data = ragflow_data.get("data", {})
         answer = data.get("answer", "")
-        
-        # 删除 [ID:x] 格式的文本
-        import re
-        answer = re.sub(r'\[ID:\d+\]', '', answer)
 
         # 构造 Ollama 兼容格式
         return {
@@ -112,43 +108,11 @@ class RagflowClient:
         """
         判断是否未检索到相关文档
         
-        检测逻辑：
-        1. reference 为空或 None
-        2. answer 包含常见\"未找到\"提示词
+        检测逻辑：精确匹配特定文本
         """
-        # 检查引用是否为空
-        if not reference or reference == {}:
-            return True
-        
-        # 检查引用内容（RAGFlow reference 结构可能包含 chunks 或 doc_aggs）
-        has_chunks = False
-        if isinstance(reference, dict):
-            chunks = reference.get("chunks", [])
-            doc_aggs = reference.get("doc_aggs", [])
-            total_tokens = reference.get("total_tokens", 0)
-
-            if chunks or doc_aggs or total_tokens > 0:
-                has_chunks = True
-        
-        if not has_chunks:
-            return True
-        
-        # 检查 answer 是否包含\"未找到\"提示（可选，根据实际 RAGFlow 提示词调整）
-        no_doc_keywords = [
-            "根据已知信息无法回答",
-            "我没有找到相关信息",
-            "抱歉，我不知道",
-            "无法从给定信息中找到答案",
-            "no relevant information found",
-            "don't have enough information",
-        ]
-        
-        answer_lower = answer.lower()
-        for keyword in no_doc_keywords:
-            if keyword.lower() in answer_lower:
-                return True
-        
-        return False
+        # 精确匹配特定文本，忽略前后空白字符
+        target_text = "The answer you are looking for is not found in the knowledge base!"
+        return answer.strip() == target_text
     
     async def generate_stream(
         self,
