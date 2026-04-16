@@ -49,7 +49,8 @@ class RagflowClient:
     def _build_request_body(
         self,
         user_prompt: str,
-        stream: bool = True
+        stream: bool = True,
+        session_id: Optional[str] = None  # 新增
     ) -> Dict[str, Any]:
         """
         构建 RAGFlow 请求体
@@ -62,11 +63,14 @@ class RagflowClient:
             RAGFlow 请求体字典
         """
         # 关键修复：RAGFlow 原生 API 使用 question 字段，不是 messages 数组
-        return {
-            "question": user_prompt,
-            "stream": stream,
-            "quote": True  # 启用引用返回
+        body = {
+        "question": user_prompt,
+        "stream": stream,
+        "quote": True
         }
+        if session_id:
+            body["session_id"] = session_id  # 带上会话ID
+        return body
     
     def _transform_response(self, ragflow_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -149,12 +153,45 @@ class RagflowClient:
         """
         流式生成文本，产生 SSE 格式的数据块（Ollama 兼容格式）
         
+        策略：先建立会话获取 session_id，再发送真正问题（避免欢迎语）
         如果未检索到文档，抛出 RagflowNoDocumentsException 触发降级
         """
-        body = self._build_request_body(user_prompt, stream=True)
         headers = self._build_headers()
         
         try:
+            # 步骤1：建立会话，获取 session_id
+            session_id = None
+            init_body = self._build_request_body("hi", stream=True)
+            
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    self.chat_endpoint,
+                    json=init_body,
+                    headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        
+                        data_content = line[5:]
+                        
+                        try:
+                            chunk_data = json.loads(data_content)
+                            data_field = chunk_data.get("data", {})
+                            if isinstance(data_field, dict):
+                                session_id = data_field.get("session_id")
+                                if session_id:
+                                    logger.info(f"Got session_id: {session_id}")
+                                    break
+                        except json.JSONDecodeError:
+                            continue
+            
+            # 步骤2：使用 session_id 发送真正请求
+            body = self._build_request_body(user_prompt, stream=True, session_id=session_id)
+            
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
                     "POST",
@@ -179,24 +216,19 @@ class RagflowClient:
                     full_answer = ""
                     full_reference = None
                     is_empty_retrieval = False
-                    chunk_count = 0
-                    WELCOME_KEYWORDS = ["hi!", "hello", "i'm your", "assistant", "what can I do"]
 
                     # 逐行读取 SSE 流
                     async for line in response.aiter_lines():
-                        logger.info(f"RAGFlow raw line: {line}")  # 加这行
                         if not line:
                             continue
                         
-                        # RAGFlow SSE 格式：data: {json} 或 data: [DONE]
                         if not line.startswith("data:"):
                             continue
                         
-                        data_content = line[5:]  # 去掉 "data: " 前缀
+                        data_content = line[5:]
                         
                         # 检查流结束标志
                         if data_content == "true" or data_content == "[DONE]":
-                            # 检查是否未检索到文档
                             if self._is_no_documents_response(full_answer, full_reference):
                                 is_empty_retrieval = True
                                 break
@@ -209,26 +241,17 @@ class RagflowClient:
                         except json.JSONDecodeError:
                             continue
                         
-                        # 关键修复：适配 RAGFlow 实际响应结构
-                        # RAGFlow 流式返回结构：{"data": {"answer": "...", "is_end": true/false}}
+                        # 解析 RAGFlow 响应结构
                         data_field = chunk_data.get("data", {})
                         if isinstance(data_field, dict):
                             answer = data_field.get("answer", "")
                             is_end = data_field.get("is_end", False)
                             reference = data_field.get("reference")
                         else:
-                            # 兼容其他可能的格式
                             answer = chunk_data.get("answer", "")
                             is_end = chunk_data.get("is_end", False)
                             reference = chunk_data.get("reference")
                         
-                        chunk_count += 1
-                        answer_lower = answer.lower()
-                        is_welcome = any(keyword in answer_lower for keyword in WELCOME_KEYWORDS)
-                        
-                        if is_welcome and chunk_count <= 2:
-                            continue
-
                         # 累积内容用于最后检查
                         full_answer += answer
                         if reference:
@@ -248,17 +271,16 @@ class RagflowClient:
                         
                         # 如果标记为结束，发送结束标志并退出
                         if is_end:
-                            # 检查是否未检索到文档
                             if self._is_no_documents_response(full_answer, full_reference):
                                 is_empty_retrieval = True
                                 break
                             yield "data: [DONE]\n\n"
                             break
-                            
+                    
                     # 如果未检索到文档，抛出异常触发降级
                     if is_empty_retrieval:
-                        raise RagflowNoDocumentsException(f"RAGFlow 未检索到相关文档，answer: {full_answer[:100]}...") 
-
+                        raise RagflowNoDocumentsException(f"RAGFlow 未检索到相关文档，answer: {full_answer[:100]}...")
+                        
         except httpx.HTTPStatusError as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
