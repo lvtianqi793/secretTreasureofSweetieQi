@@ -16,6 +16,12 @@ services:
       - SPRING_JPA_HIBERNATE_DDL_AUTO=update
       - SPRING_JPA_SHOW_SQL=true
       - SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL=true
+      # AI配置（可通过环境变量覆盖）
+      - AI_API_BASE_URL=http://ai-gateway:8000
+      - AI_API_API_KEY=
+      - AI_API_MODEL=qwen3.5:2b
+      - AI_API_TIMEOUT=120
+      - AI_API_MAX_TOKENS=4096
       # 时区配置
       - TZ=Asia/Shanghai
     restart: always # 容器异常退出时自动重启
