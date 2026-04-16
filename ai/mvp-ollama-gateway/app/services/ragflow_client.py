@@ -99,7 +99,7 @@ class RagflowClient:
         # 删除 [ID:x] 格式的文本
         import re
         answer = re.sub(r'\[ID:\d+\]', '', answer)
-        
+
         # 构造 Ollama 兼容格式
         return {
             "response": answer,
@@ -245,30 +245,27 @@ class RagflowClient:
                         except json.JSONDecodeError:
                             continue
                         
-                        # 解析 RAGFlow 响应结构
-                        data_field = chunk_data.get("data", {})
-                        if isinstance(data_field, dict):
-                            answer = data_field.get("answer", "")
-                            is_end = data_field.get("is_end", False)
-                            reference = data_field.get("reference")
-                        else:
-                            answer = chunk_data.get("answer", "")
-                            is_end = chunk_data.get("is_end", False)
-                            reference = chunk_data.get("reference")
-                        
-                        # 累积内容用于最后检查
-                        full_answer += answer
-                        if reference:
-                            full_reference = reference
-
-                        transformed = {
-                            "response": answer,
-                            "done": is_end,
-                            "model": "ragflow"
-                        }
-                        
-                        if reference:
-                            transformed["ragflow_reference"] = reference
+                        # 使用 _transform_response 方法处理响应
+                        try:
+                            transformed = self._transform_response(chunk_data)
+                            
+                            # 从转换后的数据中提取信息用于累积检查
+                            answer = transformed.get("response", "")
+                            is_end = transformed.get("done", False)
+                            reference = transformed.get("ragflow_reference")
+                            
+                            # 累积内容用于最后检查
+                            full_answer += answer
+                            if reference:
+                                full_reference = reference
+                                
+                        except HTTPException:
+                            # 如果 _transform_response 抛出 HTTPException，重新抛出
+                            raise
+                        except Exception as e:
+                            # 其他异常，跳过这个数据块
+                            logger.warning(f"Failed to transform RAGFlow response: {e}")
+                            continue
                         
                         # 输出 SSE 块
                         yield f"data: {json.dumps(transformed, ensure_ascii=False)}\n\n"
