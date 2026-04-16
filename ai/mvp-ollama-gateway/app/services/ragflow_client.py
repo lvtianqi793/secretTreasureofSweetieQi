@@ -245,6 +245,11 @@ class RagflowClient:
                         except json.JSONDecodeError:
                             continue
                         
+                        # 检查 chunk_data 是否为字典类型，避免布尔值错误
+                        if not isinstance(chunk_data, dict):
+                            logger.debug(f"Skipping non-dict chunk: {chunk_data}")
+                            continue
+                        
                         # 使用 _transform_response 方法处理响应
                         try:
                             transformed = self._transform_response(chunk_data)
