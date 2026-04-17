@@ -24,9 +24,7 @@ type ImportResponse =
     }
 
 const file = ref<File | null>(null)
-const tableName = ref('')
 const hasHeader = ref(true)
-const delimiter = ref<',' | ';' | '\t'>(',')
 
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -127,7 +125,7 @@ async function buildPreview() {
   previewing.value = true
   try {
     const chunk = await f.slice(0, 256 * 1024).text()
-    const allRows = parseCsv(chunk, delimiter.value)
+    const allRows = parseCsv(chunk, ',')
       .map((r) => r.map((x) => x.trim()))
       .filter((r) => r.some((x) => x.length > 0))
 
@@ -155,11 +153,11 @@ async function buildPreview() {
   }
 }
 
-watch([file, delimiter, hasHeader], () => {
+watch([file, hasHeader], () => {
   void buildPreview()
 })
 
-const canImport = computed(() => !!file.value && tableName.value.trim().length > 0 && !loading.value)
+const canImport = computed(() => !!file.value && !loading.value)
 
 function onPickFile(e: Event) {
   const input = e.target as HTMLInputElement
@@ -175,18 +173,12 @@ async function importCsv() {
     error.value = '请先选择 CSV 文件'
     return
   }
-  if (!tableName.value.trim()) {
-    error.value = '请填写要导入的表名'
-    return
-  }
 
   loading.value = true
   try {
     const fd = new FormData()
     fd.append('file', file.value)
-    fd.append('table', tableName.value.trim())
     fd.append('hasHeader', hasHeader.value ? '1' : '0')
-    fd.append('delimiter', delimiter.value === '\t' ? 'tab' : delimiter.value)
 
     const res = await fetch(resolveImportUrl(), {
       method: 'POST',
@@ -234,20 +226,6 @@ async function importCsv() {
         </label>
 
         <div class="csv-grid">
-          <label class="csv-field">
-            <span class="csv-field__label">目标表名</span>
-            <input v-model="tableName" class="csv-input" type="text" placeholder="例如：energy_meter_readings" />
-          </label>
-
-          <label class="csv-field">
-            <span class="csv-field__label">分隔符</span>
-            <select v-model="delimiter" class="csv-input">
-              <option value=",">逗号 ,</option>
-              <option value=";">分号 ;</option>
-              <option value="\t">Tab</option>
-            </select>
-          </label>
-
           <label class="csv-check">
             <input v-model="hasHeader" type="checkbox" />
             首行是表头

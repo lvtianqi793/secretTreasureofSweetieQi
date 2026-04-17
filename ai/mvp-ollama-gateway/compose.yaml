@@ -13,8 +13,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OLLAMA_URL=http://host.docker.internal:11434
-      - OLLAMA_MODEL=qwen3.5:2b
+      - OLLAMA_URL=http://172.17.0.1:11434
+      - OLLAMA_MODEL=qwen3.5:9b
       - SYSTEM_PROMPT_FILE=./prompts/system_prompt.txt
       - API_HOST=0.0.0.0
       - API_PORT=8000
@@ -22,6 +22,16 @@ services:
       - SYSTEM_CHAT_PROMPT_FILE=./prompts/system_chat_prompt.txt
       - SYSTEM_GENERATESQL_PROMPT_FILE=./prompts/system_generatesql_prompt.txt
       - SYSTEM_ANALYSE_PROMPT_FILE=./prompts/system_analyse_prompt.txt
+      - RAGFLOW_ENABLED=true
+      - RAGFLOW_BASE_URL=http://docker-ragflow-cpu-1:9380
+      - RAGFLOW_API_KEY=ragflow-KsoVCRYf6PH3XsmEdRpd55VvyvXX4X9VIklMeSx_Nlg
+      - RAGFLOW_CHAT_ID=3cdc8cd4358a11f1abefd962d5631214
+    networks:
+      - docker_ragflow
+
+networks:
+  docker_ragflow:
+    external: true
 
 # The commented out section below is an example of how to define a PostgreSQL
 # database that your application can use. `depends_on` tells Docker Compose to

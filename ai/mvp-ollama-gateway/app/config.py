@@ -54,6 +54,12 @@ class Settings:
         else:
             self.SYSTEM_PROMPT_FILE: Path = default_prompt_path
         
+        # RAGFlow 服务配置（analyse 路由专用）
+        self.RAGFLOW_ENABLED: bool = os.getenv("RAGFLOW_ENABLED", "false").lower() == "true"
+        self.RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9380")
+        self.RAGFLOW_API_KEY: str = os.getenv("RAGFLOW_API_KEY", "")
+        self.RAGFLOW_CHAT_ID: str = os.getenv("RAGFLOW_CHAT_ID", "")
+
         # API 服务配置
         self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
         self.API_PORT: int = int(os.getenv("API_PORT", "8000"))
@@ -139,6 +145,13 @@ class Settings:
             if not path.exists():
                 errors.append(f"{name} prompt 文件不存在: {path}")
         
+        # 如果启用了 RAGFlow，检查必要配置
+        if self.RAGFLOW_ENABLED:
+            if not self.RAGFLOW_API_KEY:
+                errors.append("RAGFLOW_ENABLED=true 但 RAGFLOW_API_KEY 未设置")
+            if not self.RAGFLOW_CHAT_ID:
+                errors.append("RAGFLOW_ENABLED=true 但 RAGFLOW_CHAT_ID 未设置")
+                
         # 检查 Ollama URL 是否设置
         if not self.OLLAMA_URL:
             errors.append("OLLAMA_URL 未设置")
