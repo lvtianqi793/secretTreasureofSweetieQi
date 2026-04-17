@@ -108,6 +108,13 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                    <environmentVariables>
+                        <AI_API_BASE_URL>${env.AI_API_BASE_URL}</AI_API_BASE_URL>
+                        <AI_API_API_KEY>${env.AI_API_API_KEY}</AI_API_API_KEY>
+                        <AI_API_MODEL>${env.AI_API_MODEL}</AI_API_MODEL>
+                        <AI_API_TIMEOUT>${env.AI_API_TIMEOUT}</AI_API_TIMEOUT>
+                        <AI_API_MAX_TOKENS>${env.AI_API_MAX_TOKENS}</AI_API_MAX_TOKENS>
+                    </environmentVariables>
                 </configuration>
             </plugin>
         </plugins>
