@@ -38,11 +38,19 @@ spring:
 # AI Model Configuration (supports OpenAI-compatible APIs)
 ai:
   api:
+<<<<<<< HEAD
     base-url: ${AI_API_BASE_URL:http://localhost:8000}
     api-key: ${AI_API_API_KEY:}
     model: ${AI_API_MODEL:qwen3.5:2b}
     timeout: ${AI_API_TIMEOUT:120}
     max-tokens: ${AI_API_MAX_TOKENS:4096}
+=======
+    base-url: ${AI_API_BASE_URL}
+    api-key: ${AI_API_API_KEY}
+    model: ${AI_API_MODEL}
+    timeout: ${AI_API_TIMEOUT}
+    max-tokens: ${AI_API_MAX_TOKENS}
+>>>>>>> develop
 
 # CSV data import path
 data:
