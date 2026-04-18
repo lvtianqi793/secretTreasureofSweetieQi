@@ -1,47 +1,32 @@
-# Maven构建产物/缓存
+# Maven 构建产物
 target/
 .mvn/
-mvnw
-mvnw.cmd
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
+pom.xml.*
 release.properties
 dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
 
-# Git相关
-.git/
-.gitignore
-
-# 环境变量/配置文件
+# 环境变量
 .env
 .env.*
-application-dev.yml
-application-test.yml
+application-*.yml
 *.properties
 
-# 日志/临时文件
+# 日志文件
 logs/
 *.log
+
+# 临时文件
 tmp/
 temp/
 
-# 编辑器配置
+# IDE 配置
 .idea/
 .vscode/
-*.swp
-*.swo
 *.iml
 
-# Docker相关（避免构建上下文循环）
-Dockerfile
-docker-compose.yaml
-.dockerignore
+# Git
+.git/
+.gitignore
 
-# 其他无关文件
-README.md
-LICENSE
-*.md
+# 系统文件
+.DS_Store

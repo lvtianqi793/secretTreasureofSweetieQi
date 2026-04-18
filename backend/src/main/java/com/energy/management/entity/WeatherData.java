@@ -17,13 +17,15 @@ import lombok.EqualsAndHashCode;
 })
 public class WeatherData extends BaseEnergyData {
 
-    /**
-     * 温度 (°F)
-     */
-    @Column(name = "temperature_f")
-    private Double temperatureF;
+    /** 环境温度 (°C) */
+    @Column(name = "temperature_c")
+    private Double temperatureC;
 
     /** 湿度 (%RH) */
     @Column(name = "humidity_pct")
     private Double humidityPct;
+
+    /** 风速 (m/s) */
+    @Column(name = "wind_speed_ms")
+    private Double windSpeedMs;
 }

@@ -37,7 +37,7 @@ function resolveImportUrl(): string {
   const raw = import.meta.env.VITE_CSV_IMPORT_URL
   const base = typeof raw === 'string' ? raw.replace(/\/$/, '') : ''
   if (base) return base
-  return '/api/data'
+  return '/api/data/import/upload'
 }
 
 function normalizeRow(row: string[], width: number) {
