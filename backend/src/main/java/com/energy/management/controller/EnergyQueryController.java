@@ -19,6 +19,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -130,5 +131,40 @@ public class EnergyQueryController {
                 "electricity", "water", "gas", "steam",
                 "chilledwater", "hotwater", "solar", "irrigation"
         ));
+    }
+
+    /**
+     * 下拉框选项: 能源类型 (含中文标签/单位) + 建筑类型
+     * 前端一次拉取即可填充两个 select
+     */
+    @Operation(summary = "获取下拉框选项 (能源类型 + 建筑类型)",
+            description = "前端用于一次性填充能源类型/建筑类型下拉框")
+    @GetMapping("/options")
+    public ApiResponse<Map<String, Object>> getOptions() {
+        List<Map<String, String>> energyTypes = List.of(
+                energyOption("electricity",  "电力能耗", "kWh"),
+                energyOption("water",        "用水量",   "m³"),
+                energyOption("gas",          "天然气",   "therms"),
+                energyOption("steam",        "蒸汽",     "lbs"),
+                energyOption("chilledwater", "冷冻水",   "ton-hours"),
+                energyOption("hotwater",     "热水",     "kBtu"),
+                energyOption("solar",        "光伏发电", "kWh"),
+                energyOption("irrigation",   "灌溉用水", "gallon")
+        );
+
+        List<String> buildingTypes = energyQueryService.getBuildingTypes();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("energyTypes", energyTypes);
+        result.put("buildingTypes", buildingTypes);
+        return ApiResponse.success(result);
+    }
+
+    private static Map<String, String> energyOption(String value, String label, String unit) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("value", value);
+        m.put("label", label);
+        m.put("unit", unit);
+        return m;
     }
 }

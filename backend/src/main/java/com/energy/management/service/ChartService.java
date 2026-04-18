@@ -132,29 +132,26 @@ public class ChartService {
 
         String chartType = "pie".equalsIgnoreCase(req.getChartType()) ? "pie" : "bar";
 
-        if ("pie".equals(chartType)) {
-            List<ChartData.PiePoint> pieData = new ArrayList<>();
-            for (int i = 0; i < categories.size(); i++) {
-                pieData.add(ChartData.PiePoint.builder()
-                        .name(categories.get(i)).value(values.get(i)).build());
-            }
-            return ChartData.builder()
-                    .chartType("pie")
-                    .title(cnName + " Top" + topN + " 建筑占比")
-                    .unit(unit)
-                    .pieData(pieData)
-                    .build();
+        List<ChartData.PiePoint> pieData = new ArrayList<>();
+        for (int i = 0; i < categories.size(); i++) {
+            pieData.add(ChartData.PiePoint.builder()
+                    .name(categories.get(i)).value(values.get(i)).build());
         }
 
+        String title = "pie".equals(chartType)
+                ? cnName + " Top" + topN + " 建筑占比"
+                : cnName + " Top" + topN + " 建筑排名";
+
         return ChartData.builder()
-                .chartType("bar")
-                .title(cnName + " Top" + topN + " 建筑排名")
+                .chartType(chartType)
+                .title(title)
                 .xAxisLabel("建筑")
                 .yAxisLabel(cnName + " (" + unit + ")")
                 .unit(unit)
                 .categories(categories)
                 .series(List.of(ChartData.Series.builder()
                         .name(cnName).data(values).build()))
+                .pieData(pieData)
                 .build();
     }
 
@@ -190,21 +187,17 @@ public class ChartService {
         String chartType = req.getChartType() == null ? "pie" : req.getChartType().toLowerCase();
         if (!List.of("pie", "bar").contains(chartType)) chartType = "pie";
 
-        ChartData.ChartDataBuilder builder = ChartData.builder()
+        return ChartData.builder()
                 .chartType(chartType)
                 .title(cnName + "按建筑类型占比")
-                .unit(unit);
-
-        if ("pie".equals(chartType)) {
-            builder.pieData(pieData);
-        } else {
-            builder.xAxisLabel("建筑类型")
-                    .yAxisLabel(cnName + " (" + unit + ")")
-                    .categories(categories)
-                    .series(List.of(ChartData.Series.builder()
-                            .name(cnName).data(values).build()));
-        }
-        return builder.build();
+                .xAxisLabel("建筑类型")
+                .yAxisLabel(cnName + " (" + unit + ")")
+                .unit(unit)
+                .categories(categories)
+                .series(List.of(ChartData.Series.builder()
+                        .name(cnName).data(values).build()))
+                .pieData(pieData)
+                .build();
     }
 
     // ==================== 工具方法 ====================
@@ -249,19 +242,16 @@ public class ChartService {
     }
 
     private void bindCommonParams(Query query, ChartRequest req) {
-        String sql = query.unwrap(org.hibernate.query.NativeQuery.class).getQueryString();
-        if (req.getBuildingId() != null && !req.getBuildingId().isBlank()
-                && sql.contains(":buildingId")) {
+        if (req.getBuildingId() != null && !req.getBuildingId().isBlank()) {
             query.setParameter("buildingId", req.getBuildingId());
         }
-        if (req.getBuildingType() != null && !req.getBuildingType().isBlank()
-                && sql.contains(":buildingType")) {
+        if (req.getBuildingType() != null && !req.getBuildingType().isBlank()) {
             query.setParameter("buildingType", req.getBuildingType());
         }
-        if (req.getStartTime() != null && sql.contains(":startTime")) {
+        if (req.getStartTime() != null) {
             query.setParameter("startTime", req.getStartTime());
         }
-        if (req.getEndTime() != null && sql.contains(":endTime")) {
+        if (req.getEndTime() != null) {
             query.setParameter("endTime", req.getEndTime());
         }
     }

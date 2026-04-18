@@ -317,23 +317,30 @@ public class StatisticsService {
     }
 
     private void setQueryParams(Query query, StatisticsRequest req) {
-        String sql = query.unwrap(org.hibernate.query.NativeQuery.class).getQueryString();
-        if (req.getBuildingId() != null && !req.getBuildingId().isBlank() && sql.contains(":buildingId")) {
+        if (req.getBuildingId() != null && !req.getBuildingId().isBlank()) {
             query.setParameter("buildingId", req.getBuildingId());
         }
-        if (req.getBuildingType() != null && !req.getBuildingType().isBlank() && sql.contains(":buildingType")) {
+        if (req.getBuildingType() != null && !req.getBuildingType().isBlank()) {
             query.setParameter("buildingType", req.getBuildingType());
         }
-        if (req.getStartTime() != null && sql.contains(":startTime")) {
+        if (req.getStartTime() != null) {
             query.setParameter("startTime", req.getStartTime());
         }
-        if (req.getEndTime() != null && sql.contains(":endTime")) {
+        if (req.getEndTime() != null) {
             query.setParameter("endTime", req.getEndTime());
         }
     }
 
     private void setCopQueryParams(Query query, StatisticsRequest req) {
-        setQueryParams(query, req);
+        if (req.getBuildingId() != null && !req.getBuildingId().isBlank()) {
+            query.setParameter("buildingId", req.getBuildingId());
+        }
+        if (req.getStartTime() != null) {
+            query.setParameter("startTime", req.getStartTime());
+        }
+        if (req.getEndTime() != null) {
+            query.setParameter("endTime", req.getEndTime());
+        }
     }
 
     private double toDouble(Object val) {
