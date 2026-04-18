@@ -5,6 +5,26 @@ import com.energy.management.dto.StatisticsResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xddf.usermodel.chart.AxisCrosses;
+import org.apache.poi.xddf.usermodel.chart.AxisPosition;
+import org.apache.poi.xddf.usermodel.chart.BarDirection;
+import org.apache.poi.xddf.usermodel.chart.ChartTypes;
+import org.apache.poi.xddf.usermodel.chart.LegendPosition;
+import org.apache.poi.xddf.usermodel.chart.MarkerStyle;
+import org.apache.poi.xddf.usermodel.chart.XDDFBarChartData;
+import org.apache.poi.xddf.usermodel.chart.XDDFCategoryAxis;
+import org.apache.poi.xddf.usermodel.chart.XDDFChartData;
+import org.apache.poi.xddf.usermodel.chart.XDDFChartLegend;
+import org.apache.poi.xddf.usermodel.chart.XDDFDataSource;
+import org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory;
+import org.apache.poi.xddf.usermodel.chart.XDDFLineChartData;
+import org.apache.poi.xddf.usermodel.chart.XDDFNumericalDataSource;
+import org.apache.poi.xddf.usermodel.chart.XDDFValueAxis;
+import org.apache.poi.xssf.usermodel.XSSFChart;
+import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
+import org.apache.poi.xssf.usermodel.XSSFDrawing;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 
@@ -88,9 +108,9 @@ public class ReportService {
             summarySheet.autoSizeColumn(0);
             summarySheet.autoSizeColumn(1);
 
-            // ===== 时间序列Sheet =====
+            // ===== 时间序列Sheet (含折线图) =====
             if (result.getTimeSeries() != null && !result.getTimeSeries().isEmpty()) {
-                Sheet tsSheet = workbook.createSheet("时间序列");
+                XSSFSheet tsSheet = workbook.createSheet("时间序列");
                 int tsRow = 0;
 
                 Row tsHeader = tsSheet.createRow(tsRow++);
@@ -98,21 +118,26 @@ public class ReportService {
                 createCell(tsHeader, 1, "累计值", headerStyle);
                 createCell(tsHeader, 2, "记录数", headerStyle);
 
+                // 写入数值列时使用真正的数值(供图表引用)
                 for (StatisticsResult.TimeSeriesPoint point : result.getTimeSeries()) {
                     Row r = tsSheet.createRow(tsRow++);
                     createCell(r, 0, point.getTimePeriod(), dataStyle);
-                    createCell(r, 1, String.format("%.2f", point.getValue()), dataStyle);
-                    createCell(r, 2, String.valueOf(point.getCount()), dataStyle);
+                    createNumericCell(r, 1, point.getValue(), dataStyle);
+                    createNumericCell(r, 2, point.getCount(), dataStyle);
                 }
 
                 tsSheet.autoSizeColumn(0);
                 tsSheet.autoSizeColumn(1);
                 tsSheet.autoSizeColumn(2);
+
+                // 内嵌折线图: 展示时段趋势
+                String unit = result.getSummary() != null ? result.getSummary().getUnit() : "";
+                embedLineChart(tsSheet, tsRow - 1, "时段趋势", "时间", unit, "累计值");
             }
 
-            // ===== COP结果Sheet =====
+            // ===== COP结果Sheet (含柱状图) =====
             if (result.getCopResults() != null && !result.getCopResults().isEmpty()) {
-                Sheet copSheet = workbook.createSheet("COP分析");
+                XSSFSheet copSheet = workbook.createSheet("COP分析");
                 int copRow = 0;
 
                 Row copHeader = copSheet.createRow(copRow++);
@@ -125,12 +150,20 @@ public class ReportService {
                     Row r = copSheet.createRow(copRow++);
                     createCell(r, 0, cop.getTimePeriod(), dataStyle);
                     createCell(r, 1, cop.getBuildingId(), dataStyle);
-                    createCell(r, 2, String.format("%.2f", cop.getCoolingOutput()), dataStyle);
-                    createCell(r, 3, String.format("%.2f", cop.getElectricInput()), dataStyle);
-                    createCell(r, 4, String.format("%.4f", cop.getCop()), dataStyle);
+                    createNumericCell(r, 2, cop.getCoolingOutput(), dataStyle);
+                    createNumericCell(r, 3, cop.getElectricInput(), dataStyle);
+                    createNumericCell(r, 4, cop.getCop(), dataStyle);
                 }
 
                 for (int i = 0; i < 5; i++) copSheet.autoSizeColumn(i);
+
+                // 内嵌柱状图: 各建筑 COP 对比
+                embedBarChart(copSheet, copRow - 1,
+                        "各建筑 COP 对比",
+                        "建筑编号", "COP",
+                        1,  // 类目列: 建筑编号 (B列)
+                        4,  // 数值列: COP (E列)
+                        "COP");
             }
 
             // ===== 异常数据Sheet =====
@@ -168,5 +201,105 @@ public class ReportService {
         Cell cell = row.createCell(col);
         cell.setCellValue(value != null ? value : "");
         if (style != null) cell.setCellStyle(style);
+    }
+
+    /** 写入数值单元格 (供图表引用) */
+    private void createNumericCell(Row row, int col, double value, CellStyle style) {
+        Cell cell = row.createCell(col);
+        cell.setCellValue(value);
+        if (style != null) cell.setCellStyle(style);
+    }
+
+    /**
+     * 在 Sheet 中内嵌折线图
+     *
+     * @param sheet       目标 Sheet (已写入数据, 第0行为表头)
+     * @param lastDataRow 最后一行数据的行号 (0-based)
+     * @param title       图表标题
+     * @param xTitle      X轴标题
+     * @param yTitle      Y轴单位
+     * @param seriesName  数据系列名
+     */
+    private void embedLineChart(XSSFSheet sheet, int lastDataRow,
+                                String title, String xTitle, String yTitle, String seriesName) {
+        if (lastDataRow < 1) return;
+
+        XSSFDrawing drawing = sheet.createDrawingPatriarch();
+        // 图表放在数据右侧 (第4列起, 占 12 列宽 × 20 行高)
+        XSSFClientAnchor anchor = drawing.createAnchor(
+                0, 0, 0, 0, 4, 0, 16, 20);
+        XSSFChart chart = drawing.createChart(anchor);
+        chart.setTitleText(title);
+        chart.setTitleOverlay(false);
+
+        XDDFChartLegend legend = chart.getOrAddLegend();
+        legend.setPosition(LegendPosition.BOTTOM);
+
+        XDDFCategoryAxis bottomAxis = chart.createCategoryAxis(AxisPosition.BOTTOM);
+        bottomAxis.setTitle(xTitle);
+        XDDFValueAxis leftAxis = chart.createValueAxis(AxisPosition.LEFT);
+        leftAxis.setTitle(yTitle);
+        leftAxis.setCrosses(AxisCrosses.AUTO_ZERO);
+
+        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, 0, 0));
+        XDDFNumericalDataSource<Double> values = XDDFDataSourcesFactory.fromNumericCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, 1, 1));
+
+        XDDFLineChartData data = (XDDFLineChartData)
+                chart.createData(ChartTypes.LINE, bottomAxis, leftAxis);
+        XDDFChartData.Series series = data.addSeries(categories, values);
+        series.setTitle(seriesName, null);
+        if (series instanceof XDDFLineChartData.Series lineSeries) {
+            lineSeries.setSmooth(false);
+            lineSeries.setMarkerStyle(MarkerStyle.CIRCLE);
+        }
+        chart.plot(data);
+    }
+
+    /**
+     * 在 Sheet 中内嵌柱状图
+     *
+     * @param sheet       目标 Sheet
+     * @param lastDataRow 最后一行数据 (0-based)
+     * @param title       图表标题
+     * @param xTitle      X轴标题
+     * @param yTitle      Y轴标题
+     * @param categoryCol 类目列 (0-based)
+     * @param valueCol    数值列 (0-based)
+     * @param seriesName  数据系列名
+     */
+    private void embedBarChart(XSSFSheet sheet, int lastDataRow,
+                               String title, String xTitle, String yTitle,
+                               int categoryCol, int valueCol, String seriesName) {
+        if (lastDataRow < 1) return;
+
+        XSSFDrawing drawing = sheet.createDrawingPatriarch();
+        XSSFClientAnchor anchor = drawing.createAnchor(
+                0, 0, 0, 0, 6, 0, 18, 20);
+        XSSFChart chart = drawing.createChart(anchor);
+        chart.setTitleText(title);
+        chart.setTitleOverlay(false);
+
+        XDDFChartLegend legend = chart.getOrAddLegend();
+        legend.setPosition(LegendPosition.BOTTOM);
+
+        XDDFCategoryAxis bottomAxis = chart.createCategoryAxis(AxisPosition.BOTTOM);
+        bottomAxis.setTitle(xTitle);
+        XDDFValueAxis leftAxis = chart.createValueAxis(AxisPosition.LEFT);
+        leftAxis.setTitle(yTitle);
+        leftAxis.setCrosses(AxisCrosses.AUTO_ZERO);
+
+        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, categoryCol, categoryCol));
+        XDDFNumericalDataSource<Double> values = XDDFDataSourcesFactory.fromNumericCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, valueCol, valueCol));
+
+        XDDFBarChartData data = (XDDFBarChartData)
+                chart.createData(ChartTypes.BAR, bottomAxis, leftAxis);
+        data.setBarDirection(BarDirection.COL);
+        XDDFChartData.Series series = data.addSeries(categories, values);
+        series.setTitle(seriesName, null);
+        chart.plot(data);
     }
 }
