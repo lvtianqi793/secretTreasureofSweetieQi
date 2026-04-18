@@ -125,6 +125,119 @@ public class EnergyQueryService {
     }
 
     /**
+     * 导出查询 - 返回命中的全部记录 (不分页, 上限保护)
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> queryAll(EnergyQueryRequest request, int maxRows) {
+        String[] tableInfo = TABLE_MAP.get(request.getEnergyType());
+        if (tableInfo == null) {
+            throw new IllegalArgumentException("不支持的能源类型: " + request.getEnergyType());
+        }
+        String tableName = tableInfo[0];
+        String valueCol = tableInfo[1];
+
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        if (request.getBuildingId() != null && !request.getBuildingId().isBlank()) {
+            where.append(" AND building_id LIKE :buildingId ");
+            params.put("buildingId", "%" + request.getBuildingId() + "%");
+        }
+        if (request.getBuildingType() != null && !request.getBuildingType().isBlank()) {
+            where.append(" AND building_type = :buildingType ");
+            params.put("buildingType", request.getBuildingType());
+        }
+        if (request.getStartTime() != null) {
+            where.append(" AND monitor_time >= :startTime ");
+            params.put("startTime", request.getStartTime());
+        }
+        if (request.getEndTime() != null) {
+            where.append(" AND monitor_time <= :endTime ");
+            params.put("endTime", request.getEndTime());
+        }
+        if (request.getMinValue() != null) {
+            where.append(" AND ").append(valueCol).append(" >= :minValue ");
+            params.put("minValue", request.getMinValue());
+        }
+        if (request.getMaxValue() != null) {
+            where.append(" AND ").append(valueCol).append(" <= :maxValue ");
+            params.put("maxValue", request.getMaxValue());
+        }
+
+        String orderBy = "value".equals(request.getSortBy()) ? valueCol : "monitor_time";
+        String sortOrder = "asc".equalsIgnoreCase(request.getSortOrder()) ? "ASC" : "DESC";
+        int limit = Math.min(Math.max(maxRows, 1), 100_000);
+
+        String sql = "SELECT id, building_id, building_type, monitor_time, " + valueCol +
+                " FROM " + tableName + where +
+                " ORDER BY " + orderBy + " " + sortOrder +
+                " LIMIT " + limit;
+
+        Query query = entityManager.createNativeQuery(sql);
+        params.forEach(query::setParameter);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = query.getResultList();
+
+        List<Map<String, Object>> records = new ArrayList<>();
+        for (Object[] row : rows) {
+            Map<String, Object> record = new LinkedHashMap<>();
+            record.put("id", row[0]);
+            record.put("buildingId", row[1]);
+            record.put("buildingType", row[2]);
+            record.put("monitorTime", row[3] != null ? row[3].toString() : null);
+            record.put("value", row[4]);
+            records.add(record);
+        }
+        return records;
+    }
+
+    /**
+     * 统计命中条数 (不受分页影响)
+     */
+    @Transactional(readOnly = true)
+    public long countByConditions(EnergyQueryRequest request) {
+        String[] tableInfo = TABLE_MAP.get(request.getEnergyType());
+        if (tableInfo == null) {
+            throw new IllegalArgumentException("不支持的能源类型: " + request.getEnergyType());
+        }
+        String tableName = tableInfo[0];
+        String valueCol = tableInfo[1];
+
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        if (request.getBuildingId() != null && !request.getBuildingId().isBlank()) {
+            where.append(" AND building_id LIKE :buildingId ");
+            params.put("buildingId", "%" + request.getBuildingId() + "%");
+        }
+        if (request.getBuildingType() != null && !request.getBuildingType().isBlank()) {
+            where.append(" AND building_type = :buildingType ");
+            params.put("buildingType", request.getBuildingType());
+        }
+        if (request.getStartTime() != null) {
+            where.append(" AND monitor_time >= :startTime ");
+            params.put("startTime", request.getStartTime());
+        }
+        if (request.getEndTime() != null) {
+            where.append(" AND monitor_time <= :endTime ");
+            params.put("endTime", request.getEndTime());
+        }
+        if (request.getMinValue() != null) {
+            where.append(" AND ").append(valueCol).append(" >= :minValue ");
+            params.put("minValue", request.getMinValue());
+        }
+        if (request.getMaxValue() != null) {
+            where.append(" AND ").append(valueCol).append(" <= :maxValue ");
+            params.put("maxValue", request.getMaxValue());
+        }
+
+        Query countQuery = entityManager.createNativeQuery("SELECT COUNT(*) FROM " + tableName + where);
+        params.forEach(countQuery::setParameter);
+        return ((Number) countQuery.getSingleResult()).longValue();
+    }
+
+    /**
      * 获取建筑列表
      */
     @Transactional(readOnly = true)

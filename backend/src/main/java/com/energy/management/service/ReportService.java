@@ -1,5 +1,6 @@
 package com.energy.management.service;
 
+import com.energy.management.dto.ChartData;
 import com.energy.management.dto.StatisticsRequest;
 import com.energy.management.dto.StatisticsResult;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ import org.apache.poi.xddf.usermodel.chart.XDDFDataSource;
 import org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory;
 import org.apache.poi.xddf.usermodel.chart.XDDFLineChartData;
 import org.apache.poi.xddf.usermodel.chart.XDDFNumericalDataSource;
+import org.apache.poi.xddf.usermodel.chart.XDDFPieChartData;
 import org.apache.poi.xddf.usermodel.chart.XDDFValueAxis;
 import org.apache.poi.xssf.usermodel.XSSFChart;
 import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
@@ -30,8 +32,13 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 报表生成与导出服务
@@ -197,6 +204,186 @@ public class ReportService {
         }
     }
 
+    /**
+     * 生成单图表报表 Excel (含数据 + 内嵌图表)
+     */
+    public byte[] generateChartReport(ChartData chart) throws IOException {
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            headerStyle.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            headerStyle.setBorderBottom(BorderStyle.THIN);
+
+            CellStyle dataStyle = workbook.createCellStyle();
+            dataStyle.setBorderBottom(BorderStyle.THIN);
+
+            String chartType = chart.getChartType() == null ? "line" : chart.getChartType().toLowerCase();
+            XSSFSheet sheet = workbook.createSheet("图表数据");
+
+            int lastRow;
+            String title = chart.getTitle() != null ? chart.getTitle() : "可视化图表";
+
+            if ("pie".equals(chartType)) {
+                // 饼图: 两列 (名称, 数值)
+                Row header = sheet.createRow(0);
+                createCell(header, 0, "名称", headerStyle);
+                createCell(header, 1, "数值" + (chart.getUnit() != null ? " (" + chart.getUnit() + ")" : ""), headerStyle);
+
+                int r = 1;
+                if (chart.getPieData() != null) {
+                    for (ChartData.PiePoint p : chart.getPieData()) {
+                        Row row = sheet.createRow(r++);
+                        createCell(row, 0, p.getName(), dataStyle);
+                        createNumericCell(row, 1, p.getValue(), dataStyle);
+                    }
+                }
+                lastRow = r - 1;
+                sheet.autoSizeColumn(0);
+                sheet.autoSizeColumn(1);
+                if (lastRow >= 1) embedPieChart(sheet, lastRow, title);
+            } else {
+                // 折线/柱状: 首列类目 + N 列系列
+                List<ChartData.Series> seriesList = chart.getSeries();
+                Row header = sheet.createRow(0);
+                createCell(header, 0, chart.getXAxisLabel() != null ? chart.getXAxisLabel() : "类目", headerStyle);
+                if (seriesList != null) {
+                    for (int i = 0; i < seriesList.size(); i++) {
+                        createCell(header, i + 1, seriesList.get(i).getName(), headerStyle);
+                    }
+                }
+
+                int categoryCount = chart.getCategories() == null ? 0 : chart.getCategories().size();
+                for (int i = 0; i < categoryCount; i++) {
+                    Row row = sheet.createRow(i + 1);
+                    createCell(row, 0, chart.getCategories().get(i), dataStyle);
+                    if (seriesList != null) {
+                        for (int s = 0; s < seriesList.size(); s++) {
+                            List<Double> data = seriesList.get(s).getData();
+                            if (data != null && i < data.size() && data.get(i) != null) {
+                                createNumericCell(row, s + 1, data.get(i), dataStyle);
+                            }
+                        }
+                    }
+                }
+                lastRow = categoryCount;
+
+                for (int i = 0; i <= (seriesList == null ? 0 : seriesList.size()); i++) {
+                    sheet.autoSizeColumn(i);
+                }
+
+                String xTitle = chart.getXAxisLabel() != null ? chart.getXAxisLabel() : "";
+                String yTitle = chart.getYAxisLabel() != null ? chart.getYAxisLabel() : "";
+                if (lastRow >= 1) {
+                    if ("bar".equals(chartType)) {
+                        embedBarChart(sheet, lastRow, title, xTitle, yTitle,
+                                0, 1,
+                                seriesList != null && !seriesList.isEmpty()
+                                        ? seriesList.get(0).getName() : "数值");
+                    } else {
+                        embedLineChart(sheet, lastRow, title, xTitle, yTitle,
+                                seriesList != null && !seriesList.isEmpty()
+                                        ? seriesList.get(0).getName() : "数值");
+                    }
+                }
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            workbook.write(baos);
+            return baos.toByteArray();
+        }
+    }
+
+    /**
+     * 生成原始查询数据 Excel
+     */
+    public byte[] generateQueryDataReport(List<Map<String, Object>> records,
+                                          String energyType,
+                                          long total) throws IOException {
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+            CellStyle headerStyle = workbook.createCellStyle();
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+            headerStyle.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
+            headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            headerStyle.setBorderBottom(BorderStyle.THIN);
+
+            CellStyle dataStyle = workbook.createCellStyle();
+            dataStyle.setBorderBottom(BorderStyle.THIN);
+
+            Sheet sheet = workbook.createSheet(energyType == null ? "data" : energyType);
+            Row header = sheet.createRow(0);
+            String[] columns = {"ID", "建筑编号", "建筑类型", "监测时间", "数值"};
+            for (int i = 0; i < columns.length; i++) {
+                createCell(header, i, columns[i], headerStyle);
+            }
+
+            int rowIdx = 1;
+            for (Map<String, Object> record : records) {
+                Row row = sheet.createRow(rowIdx++);
+                createCell(row, 0, toStr(record.get("id")), dataStyle);
+                createCell(row, 1, toStr(record.get("buildingId")), dataStyle);
+                createCell(row, 2, toStr(record.get("buildingType")), dataStyle);
+                createCell(row, 3, toStr(record.get("monitorTime")), dataStyle);
+                Object v = record.get("value");
+                if (v instanceof Number num) {
+                    createNumericCell(row, 4, num.doubleValue(), dataStyle);
+                } else {
+                    createCell(row, 4, toStr(v), dataStyle);
+                }
+            }
+            for (int i = 0; i < columns.length; i++) sheet.autoSizeColumn(i);
+
+            // 末行附注信息
+            Row noteRow = sheet.createRow(rowIdx + 1);
+            createCell(noteRow, 0, "共 " + total + " 条, 本次导出 " + records.size() + " 条", null);
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            workbook.write(baos);
+            return baos.toByteArray();
+        }
+    }
+
+    /**
+     * 将原始查询数据以 CSV 流式写入 (UTF-8 with BOM, Excel 友好)
+     */
+    public void writeQueryDataCsv(OutputStream out,
+                                  List<Map<String, Object>> records) throws IOException {
+        try (OutputStreamWriter writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
+            // BOM, 避免 Excel 打开中文乱码
+            writer.write('\uFEFF');
+            writer.write("id,building_id,building_type,monitor_time,value\n");
+            for (Map<String, Object> record : records) {
+                writer.write(csvEscape(toStr(record.get("id"))));
+                writer.write(',');
+                writer.write(csvEscape(toStr(record.get("buildingId"))));
+                writer.write(',');
+                writer.write(csvEscape(toStr(record.get("buildingType"))));
+                writer.write(',');
+                writer.write(csvEscape(toStr(record.get("monitorTime"))));
+                writer.write(',');
+                writer.write(csvEscape(toStr(record.get("value"))));
+                writer.write('\n');
+            }
+            writer.flush();
+        }
+    }
+
+    private String toStr(Object val) {
+        return val == null ? "" : val.toString();
+    }
+
+    private String csvEscape(String s) {
+        if (s == null) return "";
+        if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
+            return "\"" + s.replace("\"", "\"\"") + "\"";
+        }
+        return s;
+    }
+
     private void createCell(Row row, int col, String value, CellStyle style) {
         Cell cell = row.createCell(col);
         cell.setCellValue(value != null ? value : "");
@@ -300,6 +487,33 @@ public class ReportService {
         data.setBarDirection(BarDirection.COL);
         XDDFChartData.Series series = data.addSeries(categories, values);
         series.setTitle(seriesName, null);
+        chart.plot(data);
+    }
+
+    /**
+     * 在 Sheet 中内嵌饼图 (数据: A列名称 + B列数值)
+     */
+    private void embedPieChart(XSSFSheet sheet, int lastDataRow, String title) {
+        if (lastDataRow < 1) return;
+
+        XSSFDrawing drawing = sheet.createDrawingPatriarch();
+        XSSFClientAnchor anchor = drawing.createAnchor(
+                0, 0, 0, 0, 3, 0, 15, 20);
+        XSSFChart chart = drawing.createChart(anchor);
+        chart.setTitleText(title);
+        chart.setTitleOverlay(false);
+
+        XDDFChartLegend legend = chart.getOrAddLegend();
+        legend.setPosition(LegendPosition.RIGHT);
+
+        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, 0, 0));
+        XDDFNumericalDataSource<Double> values = XDDFDataSourcesFactory.fromNumericCellRange(
+                sheet, new CellRangeAddress(1, lastDataRow, 1, 1));
+
+        XDDFPieChartData data = (XDDFPieChartData) chart.createData(ChartTypes.PIE, null, null);
+        data.setVaryColors(true);
+        data.addSeries(categories, values);
         chart.plot(data);
     }
 }

@@ -4,11 +4,21 @@ import com.energy.management.dto.ApiResponse;
 import com.energy.management.dto.EnergyQueryRequest;
 import com.energy.management.dto.PageResult;
 import com.energy.management.service.EnergyQueryService;
+import com.energy.management.service.ReportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
@@ -23,6 +33,10 @@ import java.util.Map;
 public class EnergyQueryController {
 
     private final EnergyQueryService energyQueryService;
+    private final ReportService reportService;
+
+    /** 导出最大行数上限 (保护后端内存) */
+    private static final int EXPORT_MAX_ROWS = 100_000;
 
     /**
      * 多条件分页查询
@@ -35,6 +49,48 @@ public class EnergyQueryController {
         }
         PageResult<Map<String, Object>> result = energyQueryService.query(request);
         return ApiResponse.success(result);
+    }
+
+    /**
+     * 导出查询数据 (支持 xlsx / csv)
+     * format=xlsx 返回 Excel, format=csv 返回 UTF-8 BOM 的 CSV
+     */
+    @Operation(summary = "导出查询数据",
+            description = "按当前筛选条件导出原始记录, format=xlsx|csv, 最多 10万 行")
+    @PostMapping("/query/export")
+    public ResponseEntity<byte[]> exportQuery(
+            @RequestBody EnergyQueryRequest request,
+            @RequestParam(defaultValue = "xlsx") String format,
+            @RequestParam(required = false) Integer maxRows) throws IOException {
+
+        if (request.getEnergyType() == null || request.getEnergyType().isBlank()) {
+            throw new IllegalArgumentException(
+                    "请指定能源类型 (electricity/water/gas/steam/chilledwater/hotwater/solar/irrigation)");
+        }
+
+        int cap = (maxRows == null || maxRows <= 0) ? EXPORT_MAX_ROWS : Math.min(maxRows, EXPORT_MAX_ROWS);
+        long total = energyQueryService.countByConditions(request);
+        List<Map<String, Object>> records = energyQueryService.queryAll(request, cap);
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String baseName = "能耗数据_" + request.getEnergyType() + "_" + timestamp;
+
+        if ("csv".equalsIgnoreCase(format)) {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            reportService.writeQueryDataCsv(baos, records);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=" + URLEncoder.encode(baseName + ".csv", StandardCharsets.UTF_8))
+                    .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                    .body(baos.toByteArray());
+        }
+
+        byte[] bytes = reportService.generateQueryDataReport(records, request.getEnergyType(), total);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=" + URLEncoder.encode(baseName + ".xlsx", StandardCharsets.UTF_8))
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(bytes);
     }
 
     /**

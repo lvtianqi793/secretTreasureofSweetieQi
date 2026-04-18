@@ -172,6 +172,26 @@ public class StatisticsController {
     }
 
     /**
+     * 导出单图表 Excel (含数据+内嵌图表)
+     */
+    @Operation(summary = "导出图表 Excel", description = "根据 ChartRequest 生成含内嵌图表的 xlsx")
+    @PostMapping("/chart/export")
+    public ResponseEntity<byte[]> exportChart(@RequestBody ChartRequest request) throws IOException {
+        ChartData chartData = chartService.generateChart(request);
+        byte[] bytes = reportService.generateChartReport(chartData);
+
+        String fileName = "能耗图表_" + request.getChartType() + "_"
+                + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+                + ".xlsx";
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=" + URLEncoder.encode(fileName, StandardCharsets.UTF_8))
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(bytes);
+    }
+
+    /**
      * 快捷: 建筑类型占比饼图
      */
     @Operation(summary = "建筑类型占比饼图")
