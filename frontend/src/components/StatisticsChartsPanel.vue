@@ -1,30 +1,29 @@
 <script setup lang="ts">
-import * as echarts from 'echarts'
 import {
   computed,
-  nextTick,
   onMounted,
   onUnmounted,
   ref,
-  shallowRef,
   watch,
 } from 'vue'
+import ChartPreviewCard from './ChartPreviewCard.vue'
 import {
   type ChartPayload,
   type ChartRequest,
   type EnergyQueryExportBody,
+  type EnergyTypeOption,
+  getEnergyOptions,
   type StatisticsExportBody,
   downloadBlob,
   getChartPie,
   getChartRanking,
   getChartTrend,
-  postChart,
   postChartExport,
   postEnergyQueryExport,
   postStatisticsExport,
 } from '../api/statistics'
 
-type ChartTab = 'trend' | 'ranking' | 'pie' | 'generic'
+type ChartTab = 'trend' | 'ranking' | 'pie'
 type ExportTab = 'report' | 'chart' | 'raw'
 
 const chartTab = ref<ChartTab>('trend')
@@ -33,47 +32,54 @@ const mainTab = ref<'view' | 'export'>('view')
 
 const loading = ref(false)
 const error = ref<string | null>(null)
-const chartPayload = shallowRef<ChartPayload | null>(null)
+const chartHistory = ref<Array<{ id: string; payload: ChartPayload; createdAt: number }>>([])
+const MAX_CHART_CARDS = 20
 
-const chartEl = ref<HTMLDivElement | null>(null)
-let chartInst: echarts.ECharts | null = null
+const energyTypeOptions = ref<EnergyTypeOption[]>([])
+const buildingTypeOptions = ref<string[]>([])
+
+/** 与后端 ChartService 支持的粒度一致 */
+const GRANULARITY_OPTIONS = [
+  { value: 'hour', label: '小时' },
+  { value: 'day', label: '日' },
+  { value: 'week', label: '周' },
+  { value: 'month', label: '月' },
+  { value: 'year', label: '年' },
+] as const
+
+const ANALYSIS_OPTIONS = [
+  { value: 'summary', label: 'summary' },
+  { value: 'cop', label: 'cop' },
+  { value: 'anomaly', label: 'anomaly' },
+] as const
 
 // —— 快捷：趋势
 const trendEnergy = ref('electricity')
 const trendGranularity = ref('month')
-const trendStart = ref('2023-01-01')
-const trendEnd = ref('2023-12-31')
+const trendStart = ref('2016-01-01T00:00')
+const trendEnd = ref('2016-12-31T23:59')
 const trendBuilding = ref('')
 
 // —— 快捷：排名
 const rankEnergy = ref('electricity')
 const rankTopN = ref(10)
-const rankStart = ref('')
-const rankEnd = ref('')
+const rankStart = ref('2016-01-01T00:00')
+const rankEnd = ref('2016-12-31T23:59')
 const rankBuilding = ref('')
 
 // —— 快捷：饼图
 const pieEnergy = ref('water')
 const pieBuildingType = ref('')
-const pieStart = ref('')
-const pieEnd = ref('')
-
-// —— 通用 POST
-const genBody = ref<ChartRequest>({
-  chartType: 'line',
-  energyType: 'electricity',
-  granularity: 'month',
-  startTime: '2023-01-01',
-  endTime: '2023-12-31',
-})
+const pieStart = ref('2016-01-01T00:00')
+const pieEnd = ref('2016-12-31T23:59')
 
 // —— 导出：统计报表
 const expReport = ref<StatisticsExportBody>({
   analysisType: 'summary',
   energyType: 'electricity',
   granularity: 'month',
-  startTime: '2023-01-01 00:00:00',
-  endTime: '2023-12-31 23:59:59',
+  startTime: '2016-01-01T00:00',
+  endTime: '2016-12-31T23:59',
 })
 
 // —— 导出：单图表 Excel
@@ -81,134 +87,77 @@ const expChart = ref<ChartRequest>({
   chartType: 'line',
   energyType: 'electricity',
   granularity: 'month',
-  startTime: '2023-01-01',
-  endTime: '2023-12-31',
+  startTime: '2016-01-01T00:00',
+  endTime: '2016-12-31T23:59',
 })
 
 // —— 导出：原始记录
 const expRaw = ref<EnergyQueryExportBody>({
   energyType: 'electricity',
   format: 'xlsx',
+  startTime: '2016-01-01T00:00',
+  endTime: '2016-12-31T23:59',
   page: 1,
   pageSize: 5000,
   sortBy: 'monitor_time',
   sortOrder: 'desc',
 })
 
-const chartTitle = computed(() => chartPayload.value?.title ?? '图表预览')
+const chartTitle = computed(() => (chartHistory.value.length ? '已生成图表' : '图表预览'))
 
-function disposeChart() {
-  chartInst?.dispose()
-  chartInst = null
-}
+const expReportStart = computed<string>({
+  get: () => expReport.value.startTime ?? '',
+  set: (v) => {
+    expReport.value.startTime = v
+  },
+})
+const expReportEnd = computed<string>({
+  get: () => expReport.value.endTime ?? '',
+  set: (v) => {
+    expReport.value.endTime = v
+  },
+})
+const expChartStart = computed<string>({
+  get: () => expChart.value.startTime ?? '',
+  set: (v) => {
+    expChart.value.startTime = v
+  },
+})
+const expChartEnd = computed<string>({
+  get: () => expChart.value.endTime ?? '',
+  set: (v) => {
+    expChart.value.endTime = v
+  },
+})
+const expRawStart = computed<string>({
+  get: () => expRaw.value.startTime ?? '',
+  set: (v) => {
+    expRaw.value.startTime = v
+  },
+})
+const expRawEnd = computed<string>({
+  get: () => expRaw.value.endTime ?? '',
+  set: (v) => {
+    expRaw.value.endTime = v
+  },
+})
 
-function buildOption(data: ChartPayload): echarts.EChartsOption {
-  const unit = data.unit ?? ''
-  const textColor = '#e8edf4'
-  const muted = '#8b9cb3'
-
-  const baseTitle: echarts.TitleComponentOption = {
-    text: data.title,
-    left: 'center',
-    top: 8,
-    textStyle: { color: textColor, fontSize: 14 },
-  }
-
-  if (data.chartType === 'pie') {
-    const cats = data.categories ?? []
-    const first = data.series[0]
-    const pieData: { name: string; value: number }[] = []
-    if (cats.length > 0 && first?.data?.length) {
-      for (let i = 0; i < cats.length; i += 1) {
-        pieData.push({ name: cats[i] ?? `项${i + 1}`, value: Number(first.data[i] ?? 0) })
-      }
-    }
-
-    return {
-      backgroundColor: 'transparent',
-      title: baseTitle,
-      tooltip: { trigger: 'item' },
-      legend: { bottom: 8, textStyle: { color: muted } },
-      series: [
-        {
-          name: data.series[0]?.name ?? '占比',
-          type: 'pie',
-          radius: ['38%', '68%'],
-          data: pieData.length ? pieData : [{ name: '暂无数据', value: 0 }],
-          label: { color: textColor },
-        },
-      ],
-    }
-  }
-
-  const categories = data.categories ?? []
-  if (data.chartType === 'line') {
-    return {
-      backgroundColor: 'transparent',
-      title: baseTitle,
-      tooltip: { trigger: 'axis' },
-      legend: { bottom: 4, textStyle: { color: muted } },
-      grid: { left: 56, right: 20, top: 48, bottom: 72 },
-      xAxis: {
-        type: 'category',
-        data: categories,
-        axisLabel: { color: muted, rotate: categories.length > 12 ? 35 : 0 },
-      },
-      yAxis: {
-        type: 'value',
-        name: unit,
-        nameTextStyle: { color: muted },
-        axisLabel: { color: muted },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
-      },
-      series: data.series.map((s) => ({
-        name: s.name,
-        type: 'line',
-        smooth: true,
-        data: s.data,
-        symbolSize: 6,
-      })),
-    }
-  }
-
-  // bar
-  return {
-    backgroundColor: 'transparent',
-    title: baseTitle,
-    tooltip: { trigger: 'axis' },
-    legend: { bottom: 4, textStyle: { color: muted } },
-    grid: { left: 56, right: 20, top: 48, bottom: 72 },
-    xAxis: {
-      type: 'category',
-      data: categories,
-      axisLabel: { color: muted, rotate: categories.length > 10 ? 30 : 0 },
-    },
-    yAxis: {
-      type: 'value',
-      name: unit,
-      nameTextStyle: { color: muted },
-      axisLabel: { color: muted },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
-    },
-    series: data.series.map((s) => ({
-      name: s.name,
-      type: 'bar',
-      data: s.data,
-      barMaxWidth: 36,
-    })),
-  }
+function toBackendDateTime(local: string, edge: 'start' | 'end') {
+  if (!local) return ''
+  // input[type=datetime-local] => yyyy-MM-ddTHH:mm
+  if (local.includes('T')) return `${local.replace('T', ' ')}:00`
+  // 兼容旧值(yyyy-MM-dd)
+  return `${local} ${edge === 'start' ? '00:00:00' : '23:59:59'}`
 }
 
 function renderChart(data: ChartPayload) {
-  chartPayload.value = data
-  nextTick(() => {
-    if (!chartEl.value) return
-    if (!chartInst) {
-      chartInst = echarts.init(chartEl.value, undefined, { renderer: 'canvas' })
-    }
-    chartInst.setOption(buildOption(data), true)
-    chartInst.resize()
+  const now = Date.now()
+  chartHistory.value.unshift({
+    id: `${now}_${Math.random().toString(16).slice(2)}`,
+    payload: data,
+    createdAt: now,
   })
+  if (chartHistory.value.length > MAX_CHART_CARDS) chartHistory.value.length = MAX_CHART_CARDS
 }
 
 async function loadTrend() {
@@ -218,15 +167,13 @@ async function loadTrend() {
     const data = await getChartTrend({
       energyType: trendEnergy.value,
       granularity: trendGranularity.value,
-      startTime: trendStart.value || undefined,
-      endTime: trendEnd.value || undefined,
+      startTime: (trendStart.value && toBackendDateTime(trendStart.value, 'start')) || undefined,
+      endTime: (trendEnd.value && toBackendDateTime(trendEnd.value, 'end')) || undefined,
       buildingId: trendBuilding.value || undefined,
     })
     renderChart(data)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
-    chartPayload.value = null
-    disposeChart()
   } finally {
     loading.value = false
   }
@@ -239,15 +186,13 @@ async function loadRanking() {
     const data = await getChartRanking({
       energyType: rankEnergy.value,
       topN: rankTopN.value,
-      startTime: rankStart.value || undefined,
-      endTime: rankEnd.value || undefined,
+      startTime: (rankStart.value && toBackendDateTime(rankStart.value, 'start')) || undefined,
+      endTime: (rankEnd.value && toBackendDateTime(rankEnd.value, 'end')) || undefined,
       buildingId: rankBuilding.value || undefined,
     })
     renderChart(data)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
-    chartPayload.value = null
-    disposeChart()
   } finally {
     loading.value = false
   }
@@ -260,46 +205,31 @@ async function loadPie() {
     const data = await getChartPie({
       energyType: pieEnergy.value,
       buildingType: pieBuildingType.value || undefined,
-      startTime: pieStart.value || undefined,
-      endTime: pieEnd.value || undefined,
+      startTime: (pieStart.value && toBackendDateTime(pieStart.value, 'start')) || undefined,
+      endTime: (pieEnd.value && toBackendDateTime(pieEnd.value, 'end')) || undefined,
     })
     renderChart(data)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
-    chartPayload.value = null
-    disposeChart()
   } finally {
     loading.value = false
   }
-}
-
-async function loadGeneric() {
-  loading.value = true
-  error.value = null
-  try {
-    const data = await postChart({ ...genBody.value })
-    renderChart(data)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
-    chartPayload.value = null
-    disposeChart()
-  } finally {
-    loading.value = false
-  }
-}
-
-function onResize() {
-  chartInst?.resize()
 }
 
 onMounted(() => {
-  window.addEventListener('resize', onResize)
+  void (async () => {
+    try {
+      const opt = await getEnergyOptions()
+      energyTypeOptions.value = opt.energyTypes ?? []
+      buildingTypeOptions.value = opt.buildingTypes ?? []
+    } catch {
+      // ignore options load errors; fall back to manual input
+    }
+  })()
   void loadTrend()
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', onResize)
-  disposeChart()
 })
 
 watch(chartTab, (t) => {
@@ -307,17 +237,19 @@ watch(chartTab, (t) => {
   if (t === 'trend') void loadTrend()
   if (t === 'ranking') void loadRanking()
   if (t === 'pie') void loadPie()
-  if (t === 'generic') {
-    chartPayload.value = null
-    disposeChart()
-  }
 })
 
 async function doExportReport() {
   loading.value = true
   error.value = null
   try {
-    const blob = await postStatisticsExport({ ...expReport.value })
+    const blob = await postStatisticsExport({
+      ...expReport.value,
+      startTime: expReport.value.startTime
+        ? toBackendDateTime(expReport.value.startTime, 'start')
+        : undefined,
+      endTime: expReport.value.endTime ? toBackendDateTime(expReport.value.endTime, 'end') : undefined,
+    })
     const name = `能耗统计报表_${expReport.value.analysisType}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.xlsx`
     downloadBlob(blob, name)
   } catch (e) {
@@ -331,7 +263,11 @@ async function doExportChart() {
   loading.value = true
   error.value = null
   try {
-    const blob = await postChartExport({ ...expChart.value })
+    const blob = await postChartExport({
+      ...expChart.value,
+      startTime: expChart.value.startTime ? toBackendDateTime(expChart.value.startTime, 'start') : undefined,
+      endTime: expChart.value.endTime ? toBackendDateTime(expChart.value.endTime, 'end') : undefined,
+    })
     downloadBlob(blob, `统计图表_${expChart.value.chartType}_${Date.now()}.xlsx`)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
@@ -344,7 +280,11 @@ async function doExportRaw() {
   loading.value = true
   error.value = null
   try {
-    const blob = await postEnergyQueryExport({ ...expRaw.value })
+    const blob = await postEnergyQueryExport({
+      ...expRaw.value,
+      startTime: expRaw.value.startTime ? toBackendDateTime(expRaw.value.startTime, 'start') : undefined,
+      endTime: expRaw.value.endTime ? toBackendDateTime(expRaw.value.endTime, 'end') : undefined,
+    })
     const ext = expRaw.value.format === 'csv' ? 'csv' : 'xlsx'
     downloadBlob(blob, `能耗原始记录_${expRaw.value.energyType}_${Date.now()}.${ext}`)
   } catch (e) {
@@ -383,9 +323,6 @@ async function doExportRaw() {
           </button>
         </div>
       </div>
-      <p class="ai-panel__subtitle">
-        对接 <code>/api/statistics/chart</code> 系列与导出接口；图表使用 ECharts 渲染。
-      </p>
     </header>
 
     <div class="stats-panel__body">
@@ -420,38 +357,28 @@ async function doExportRaw() {
           >
             类型占比
           </button>
-          <button
-            type="button"
-            class="stats-subtabs__btn"
-            :class="{ 'stats-subtabs__btn--active': chartTab === 'generic' }"
-            @click="chartTab = 'generic'"
-          >
-            通用请求
-          </button>
         </div>
 
         <div v-if="chartTab === 'trend'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="trendEnergy" class="csv-input" placeholder="electricity" />
+            <input v-model="trendEnergy" class="csv-input" list="energy-types" placeholder="例如 electricity" />
           </label>
           <label class="stats-field">
             <span>粒度</span>
             <select v-model="trendGranularity" class="csv-input">
-              <option value="hour">hour</option>
-              <option value="day">day</option>
-              <option value="week">week</option>
-              <option value="month">month</option>
-              <option value="year">year</option>
+              <option v-for="g in GRANULARITY_OPTIONS" :key="g.value" :value="g.value">
+                {{ g.label }}
+              </option>
             </select>
           </label>
           <label class="stats-field">
             <span>开始日期</span>
-            <input v-model="trendStart" class="csv-input" type="date" />
+            <input v-model="trendStart" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
             <span>结束日期</span>
-            <input v-model="trendEnd" class="csv-input" type="date" />
+            <input v-model="trendEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
             <span>建筑 ID（可选）</span>
@@ -463,19 +390,19 @@ async function doExportRaw() {
         <div v-if="chartTab === 'ranking'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="rankEnergy" class="csv-input" />
+            <input v-model="rankEnergy" class="csv-input" list="energy-types" />
           </label>
           <label class="stats-field">
             <span>Top N</span>
             <input v-model.number="rankTopN" class="csv-input" type="number" min="1" max="100" />
           </label>
           <label class="stats-field">
-            <span>开始（可选）</span>
-            <input v-model="rankStart" class="csv-input" type="date" />
+            <span>开始</span>
+            <input v-model="rankStart" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
-            <span>结束（可选）</span>
-            <input v-model="rankEnd" class="csv-input" type="date" />
+            <span>结束</span>
+            <input v-model="rankEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
             <span>建筑 ID（可选）</span>
@@ -487,61 +414,21 @@ async function doExportRaw() {
         <div v-if="chartTab === 'pie'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="pieEnergy" class="csv-input" />
+            <input v-model="pieEnergy" class="csv-input" list="energy-types" />
           </label>
           <label class="stats-field stats-field--wide">
             <span>建筑类型（可选）</span>
-            <input v-model="pieBuildingType" class="csv-input" />
-          </label>
-          <label class="stats-field">
-            <span>开始（可选）</span>
-            <input v-model="pieStart" class="csv-input" type="date" />
-          </label>
-          <label class="stats-field">
-            <span>结束（可选）</span>
-            <input v-model="pieEnd" class="csv-input" type="date" />
-          </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="loadPie">查询</button>
-        </div>
-
-        <div v-if="chartTab === 'generic'" class="stats-form stats-form--generic">
-          <label class="stats-field">
-            <span>图表类型</span>
-            <select v-model="genBody.chartType" class="csv-input">
-              <option value="line">line</option>
-              <option value="bar">bar</option>
-              <option value="pie">pie</option>
-            </select>
-          </label>
-          <label class="stats-field">
-            <span>能源类型</span>
-            <input v-model="genBody.energyType" class="csv-input" />
-          </label>
-          <label class="stats-field">
-            <span>粒度</span>
-            <input v-model="genBody.granularity" class="csv-input" placeholder="month" />
+            <input v-model="pieBuildingType" class="csv-input" list="building-types" />
           </label>
           <label class="stats-field">
             <span>开始</span>
-            <input v-model="genBody.startTime" class="csv-input" placeholder="2023-01-01" />
+            <input v-model="pieStart" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
             <span>结束</span>
-            <input v-model="genBody.endTime" class="csv-input" placeholder="2023-12-31" />
+            <input v-model="pieEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
-          <label class="stats-field">
-            <span>建筑 ID</span>
-            <input v-model="genBody.buildingId" class="csv-input" />
-          </label>
-          <label class="stats-field">
-            <span>建筑类型</span>
-            <input v-model="genBody.buildingType" class="csv-input" />
-          </label>
-          <label class="stats-field">
-            <span>Top N</span>
-            <input v-model.number="genBody.topN" class="csv-input" type="number" placeholder="排名用" />
-          </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="loadGeneric">POST 查询</button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="loadPie">查询</button>
         </div>
 
         <div class="stats-chart-wrap">
@@ -549,10 +436,15 @@ async function doExportRaw() {
             <span class="stats-chart-head__title">{{ chartTitle }}</span>
             <span v-if="loading" class="stats-chart-head__meta">加载中…</span>
           </div>
-          <div ref="chartEl" class="stats-chart" />
-          <p v-if="!loading && !chartPayload && chartTab === 'generic'" class="stats-chart-empty">
-            填写参数后点击「POST 查询」。
-          </p>
+          <div v-if="!chartHistory.length && !loading" class="stats-chart-empty">点击上方「查询」生成图表卡片。</div>
+          <div class="stats-chart-cards">
+            <ChartPreviewCard
+              v-for="c in chartHistory"
+              :key="c.id"
+              :payload="c.payload"
+              :created-at="c.createdAt"
+            />
+          </div>
         </div>
       </template>
 
@@ -589,34 +481,36 @@ async function doExportRaw() {
           <label class="stats-field">
             <span>分析类型</span>
             <select v-model="expReport.analysisType" class="csv-input">
-              <option value="summary">summary 时段汇总</option>
-              <option value="cop">cop</option>
-              <option value="anomaly">anomaly</option>
+              <option v-for="a in ANALYSIS_OPTIONS" :key="a.value" :value="a.value">
+                {{ a.label }}
+              </option>
             </select>
           </label>
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expReport.energyType" class="csv-input" />
+            <input v-model="expReport.energyType" class="csv-input" list="energy-types" />
           </label>
           <label class="stats-field">
             <span>粒度</span>
-            <input v-model="expReport.granularity" class="csv-input" />
+            <select v-model="expReport.granularity" class="csv-input">
+              <option v-for="g in GRANULARITY_OPTIONS" :key="g.value" :value="g.value">
+                {{ g.label }}
+              </option>
+            </select>
           </label>
           <label class="stats-field stats-field--wide">
             <span>开始时间</span>
-            <input v-model="expReport.startTime" class="csv-input" placeholder="yyyy-MM-dd HH:mm:ss" />
+            <input v-model="expReportStart" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
             <span>结束时间</span>
-            <input v-model="expReport.endTime" class="csv-input" />
+            <input v-model="expReportEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
             <span>建筑 ID</span>
             <input v-model="expReport.buildingId" class="csv-input" />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportReport">
-            POST /api/statistics/export
-          </button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="doExportReport">导出统计报表</button>
         </div>
 
         <div v-if="exportTab === 'chart'" class="stats-form stats-form--generic">
@@ -630,33 +524,35 @@ async function doExportRaw() {
           </label>
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expChart.energyType" class="csv-input" />
+            <input v-model="expChart.energyType" class="csv-input" list="energy-types" />
           </label>
           <label class="stats-field">
             <span>粒度</span>
-            <input v-model="expChart.granularity" class="csv-input" />
+            <select v-model="expChart.granularity" class="csv-input">
+              <option v-for="g in GRANULARITY_OPTIONS" :key="g.value" :value="g.value">
+                {{ g.label }}
+              </option>
+            </select>
           </label>
-          <label class="stats-field">
+          <label class="stats-field stats-field--wide">
             <span>开始</span>
-            <input v-model="expChart.startTime" class="csv-input" />
+            <input v-model="expChartStart" class="csv-input" type="datetime-local" step="900" />
           </label>
-          <label class="stats-field">
+          <label class="stats-field stats-field--wide">
             <span>结束</span>
-            <input v-model="expChart.endTime" class="csv-input" />
+            <input v-model="expChartEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
             <span>Top N</span>
             <input v-model.number="expChart.topN" class="csv-input" type="number" />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportChart">
-            POST /api/statistics/chart/export
-          </button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="doExportChart">导出图表 Excel</button>
         </div>
 
         <div v-if="exportTab === 'raw'" class="stats-form stats-form--generic">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expRaw.energyType" class="csv-input" required />
+            <input v-model="expRaw.energyType" class="csv-input" list="energy-types" required />
           </label>
           <label class="stats-field">
             <span>格式</span>
@@ -666,12 +562,12 @@ async function doExportRaw() {
             </select>
           </label>
           <label class="stats-field stats-field--wide">
-            <span>开始时间</span>
-            <input v-model="expRaw.startTime" class="csv-input" placeholder="可选" />
+            <span>开始</span>
+            <input v-model="expRawStart" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
-            <span>结束时间</span>
-            <input v-model="expRaw.endTime" class="csv-input" />
+            <span>结束</span>
+            <input v-model="expRawEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
             <span>建筑 ID</span>
@@ -681,16 +577,21 @@ async function doExportRaw() {
             <span>每页条数</span>
             <input v-model.number="expRaw.pageSize" class="csv-input" type="number" min="1" />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportRaw">
-            POST /api/energy/query/export
-          </button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="doExportRaw">导出原始记录</button>
         </div>
-
-        <p class="stats-export-hint">
-          报表导出对应后端 <code>POST /api/statistics/export</code>；单图表为 <code>POST /api/statistics/chart/export</code>；原始记录为
-          <code>POST /api/energy/query/export</code>（需后端实现）。
-        </p>
       </template>
     </div>
+
+    <datalist id="energy-types">
+      <option
+        v-for="e in energyTypeOptions"
+        :key="e.value"
+        :value="e.value"
+        :label="`${e.label}${e.unit ? `（${e.unit}）` : ''}`"
+      />
+    </datalist>
+    <datalist id="building-types">
+      <option v-for="t in buildingTypeOptions" :key="t" :value="t" />
+    </datalist>
   </section>
 </template>

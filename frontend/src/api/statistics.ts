@@ -75,6 +75,14 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   })
 }
 
+export type EnergyTypeOption = { value: string; label: string; unit?: string }
+export type EnergyOptionsPayload = { energyTypes: EnergyTypeOption[]; buildingTypes: string[] }
+
+/** GET /api/energy/options — 一次性返回能源类型 + 建筑类型选项 */
+export function getEnergyOptions() {
+  return fetchJson<EnergyOptionsPayload>('/api/energy/options')
+}
+
 function buildQuery(params: Record<string, string | number | undefined | null>) {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
