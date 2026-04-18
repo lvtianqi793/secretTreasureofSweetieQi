@@ -153,10 +153,12 @@ public class EnergyQueryController {
         );
 
         List<String> buildingTypes = energyQueryService.getBuildingTypes();
+        List<Map<String, Object>> buildings = energyQueryService.getBuildingList();
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("energyTypes", energyTypes);
         result.put("buildingTypes", buildingTypes);
+        result.put("buildings", buildings);
         return ApiResponse.success(result);
     }
 
