@@ -22,6 +22,9 @@ build/
 local_settings.py
 .env
 .env.*
+!.env.example.backend
+!.env.example.db
+!.env.example.aiapi
 .coverage
 htmlcov/
 
@@ -62,6 +65,7 @@ data/csv/*.xls
 # 数据库和临时文件
 # ==========================================
 *.db
+!.env.example.db
 *.sqlite
 *.sqlite3
 *.log

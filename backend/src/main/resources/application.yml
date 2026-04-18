@@ -44,14 +44,23 @@ ai:
     timeout: ${AI_API_TIMEOUT:120}
     max-tokens: ${AI_API_MAX_TOKENS:4096}
 
-
 # CSV data import path
 data:
   import:
-    base-path: ./data/csv
+    base-path: /data/csv
 
 # Logging
 logging:
   level:
     com.energy.management: DEBUG
     org.hibernate.SQL: WARN
+  # 生产环境日志配置
+  file:
+    name: /var/log/energy-management/application.log
+    max-size: 10MB
+    max-history: 7
+    total-size-cap: 100MB
+  # 日志格式
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %-5level - %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} - %-5level - %logger{36} - %msg%n"
