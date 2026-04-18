@@ -129,10 +129,6 @@ replay_pid*.log
 # Spring Cloud Config
 spring-cloud-config-repo/
 
-# 日志
-logs/
-*.log
-
 # 临时文件
 *.tmp
 *.temp
