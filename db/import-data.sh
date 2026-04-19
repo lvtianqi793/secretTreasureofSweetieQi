@@ -41,6 +41,14 @@ import_csv() {
             table_name="electricity_data"
             value_column="electricity_kwh"
             ;;
+        *chilledwater*)
+            table_name="chilledwater_data"
+            value_column="chilledwater_tonhours"
+            ;;
+        *hotwater*)
+            table_name="hotwater_data"
+            value_column="hotwater_kbtu"
+            ;;
         *water*)
             table_name="water_data"
             value_column="water_m3"
@@ -52,14 +60,6 @@ import_csv() {
         *steam*)
             table_name="steam_data"
             value_column="steam_lbs"
-            ;;
-        *chilledwater*)
-            table_name="chilledwater_data"
-            value_column="chilledwater_tonhours"
-            ;;
-        *hotwater*)
-            table_name="hotwater_data"
-            value_column="hotwater_kbtu"
             ;;
         *solar*)
             table_name="solar_data"
