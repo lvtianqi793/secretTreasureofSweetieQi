@@ -101,7 +101,22 @@ public class AiChatService {
                     question, sql, resultJson
             );
 
-            String analysisResponse = aiService.analyse(analysisPrompt);
+            String analysisResponse;
+            try {
+                analysisResponse = aiService.analyse(analysisPrompt);
+            } catch (Exception analyseEx) {
+                log.warn("AI分析接口调用失败，降级到运维知识接口: {}", analyseEx.getMessage());
+                // 降级: 将查询到的数据传递给运维知识接口
+                String dataSummaryPrompt = String.format(
+                        "用户问题: %s\n\n" +
+                        "已执行的SQL: %s\n\n" +
+                        "查询到的数据(共%d条):\n%s\n\n" +
+                        "请基于你的建筑能源运维知识，对上述数据进行分析和解读，回答用户的问题。",
+                        question, sql, queryResults.size(), resultJson
+                );
+                analysisResponse = aiService.chatOps(dataSummaryPrompt, null) +
+                        "\n\n(注: AI数据分析服务暂不可用，以上为基于运维知识库的分析)";
+            }
 
             return new AiChatResponse(
                     analysisResponse,
