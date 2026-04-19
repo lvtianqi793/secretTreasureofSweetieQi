@@ -3,6 +3,8 @@
 # 一键启动脚本 - 能源管理系统
 # 支持: start | stop | restart | status
 
+RAGFLOW_DIR="${HOME}/myRagflow/ragflow/docker"  # 根据实际路径调整
+
 set -e
 
 # 脚本名称
@@ -113,10 +115,8 @@ check_ollama() {
 # 启动 Ragflow
 start_ragflow() {
     log_info "检查 Ragflow 状态..."
-    local ragflow_dir="$HOME/myRagflow/ragflow/docker"
-    
-    if [ ! -d "$ragflow_dir" ]; then
-        log_error "Ragflow 目录不存在: $ragflow_dir"
+    if [ ! -d "$RAGFLOW_DIR" ]; then
+        log_error "Ragflow 目录不存在: $RAGFLOW_DIR"
         exit 1
     fi
     
@@ -128,8 +128,11 @@ start_ragflow() {
     
     log_info "启动 Ragflow..."
     
-    cd "$ragflow_dir"
-    docker compose up -d
+    # 使用子 shell 执行，避免影响父 shell 的工作目录
+    (
+        cd "$RAGFLOW_DIR"
+        docker compose up -d
+    )
     
     local attempt=1
     while [ $attempt -le 30 ]; do
@@ -201,11 +204,13 @@ cmd_stop() {
     docker compose down 2>/dev/null || true
     
     # 停止 Ragflow
-    local ragflow_dir="$HOME/MyRagflow/ragflow/docker"
-    if [ -d "$ragflow_dir" ]; then
+    if [ -d "$RAGFLOW_DIR" ]; then
         log_info "停止 Ragflow..."
-        cd "$ragflow_dir"
-        docker compose down 2>/dev/null || true
+        # 使用子 shell 执行，避免影响父 shell 的工作目录
+        (
+            cd "$RAGFLOW_DIR"
+            docker compose down 2>/dev/null || true
+        )
     fi
     
     # 停止 ollama（如果是脚本启动的）
@@ -249,11 +254,13 @@ cmd_status() {
     docker compose ps 2>/dev/null || echo "未运行"
     
     echo ""
-    local ragflow_dir="$HOME/MyRagflow/ragflow/docker"
-    if [ -d "$ragflow_dir" ]; then
+    if [ -d "$RAGFLOW_DIR" ]; then
         log_info "Ragflow 容器状态:"
-        cd "$ragflow_dir"
-        docker compose ps 2>/dev/null || echo "未运行"
+        # 使用子 shell 执行，避免影响父 shell 的工作目录
+        (
+            cd "$RAGFLOW_DIR"
+            docker compose ps 2>/dev/null || echo "未运行"
+        )
     fi
     
     echo ""
