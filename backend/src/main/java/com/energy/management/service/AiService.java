@@ -52,6 +52,14 @@ public class AiService {
     }
 
     /**
+     * MCP Agent 智能问答 → /generate/agent
+     * 由 FastAPI 侧的 Ollama tool-calling + MCP 协议自主决定是否调用工具查真实数据。
+     */
+    public String chatAgent(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/agent", prompt, history);
+    }
+
+    /**
      * 统一调用本地LLM
      *
      * @param endpoint 接口路径, 如 /generate/chat

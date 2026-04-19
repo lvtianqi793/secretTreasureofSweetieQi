@@ -7,10 +7,12 @@ FastAPI 应用入口
 import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -18,6 +20,7 @@ from app.models.request import ChatRequest, ErrorResponse, HealthResponse
 from app.services.prompt_loader import get_prompt_loader
 from app.services.ollama_client import get_ollama_client
 from app.services.ragflow_client import get_ragflow_client, RagflowNoDocumentsException
+from app.mcp_server import mcp as mcp_server
 
 
 # 配置日志
@@ -92,22 +95,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 挂载 MCP (Model Context Protocol) SSE 子应用
+# 暴露 /mcp/sse (SSE 握手) 与 /mcp/messages/ (消息通道)
+# 不影响现有 /generate/* 路由与 RAGFlow 逻辑
+app.mount("/mcp", mcp_server.sse_app())
+
+# 挂载 /exports 静态目录：MCP export_report / export_chart 工具
+# 把后端生成的 xlsx/csv 落盘后，用户通过 http://host:port/exports/<filename> 下载
+_EXPORTS_DIR = Path(__file__).resolve().parent.parent / "exports"
+_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/exports", StaticFiles(directory=str(_EXPORTS_DIR)), name="exports")
+
 
 async def generate_with_type(request: ChatRequest, prompt_type: str):
     """
     通用生成逻辑，根据类型选择 Ollama 或 RAGFlow
-    
+
     Args:
         request: 请求体
         prompt_type: prompt 类型 (chat/generatesql/analyse)
     """
     logger.info(f"收到 [{prompt_type}] 生成请求，prompt长度: {len(request.prompt)}")
-    
+
     # analyse 类型且启用 RAGFlow 时，使用 RAGFlow
     if prompt_type == "analyse" and settings.RAGFLOW_ENABLED:
         return await _generate_with_ragflow(request, prompt_type)
     else:
         return await _generate_with_ollama(request, prompt_type)
+
+
+async def _run_agent_response(request: ChatRequest, prompt_source: str = "chat"):
+    """
+    通过 MCP Agent（Ollama tool-calling + 真实 MCP 协议）处理请求。
+    调用链：/generate/* → agent_service → MCP SSE → MCP Server → Spring Boot REST
+    """
+    from app.services.agent_service import run_agent_stream
+
+    # 快速失败：Ollama 不可用
+    client = get_ollama_client()
+    if not await client.check_connection():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Ollama 服务暂时不可用"
+        )
+
+    logger.info(f"收到 [agent:{prompt_source}] 请求，prompt长度: {len(request.prompt)}")
+
+    async def event_stream():
+        async for chunk in run_agent_stream(
+            user_prompt=request.prompt,
+            model=request.model,
+            temperature=request.temperature,
+            system_prompt_source=prompt_source,
+        ):
+            yield chunk
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        }
+    )
 
 
 async def _generate_with_ollama(request: ChatRequest, prompt_type: str):
@@ -304,8 +356,11 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
 @app.post(
     "/generate/chat",
     response_class=StreamingResponse,
-    summary="流式聊天生成",
-    description="接收用户 prompt，结合 chat 系统 prompt，流式返回结果（Ollama）",
+    summary="流式聊天生成（运维知识问答，纯 Ollama）",
+    description=(
+        "接收用户 prompt，由 Ollama 结合 chat 系统 prompt 生成回复。\n"
+        "此端点仅做纯对话；需要真实数据查询的请求请走 /generate/agent（MCP）。"
+    ),
     responses={
         200: {
             "description": "SSE 流式响应",
@@ -315,18 +370,12 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
                 }
             }
         },
-        422: {
-            "description": "请求参数验证失败",
-            "model": ErrorResponse
-        },
-        503: {
-            "description": "Ollama 服务不可用",
-            "model": ErrorResponse
-        }
+        422: {"description": "请求参数验证失败", "model": ErrorResponse},
+        503: {"description": "Ollama 服务不可用", "model": ErrorResponse}
     }
 )
 async def generate_chat(request: ChatRequest):
-    """聊天生成端点"""
+    """聊天生成端点（纯 Ollama，运维知识问答用）"""
     return await generate_with_type(request, "chat")
 
 
@@ -392,6 +441,33 @@ async def generate_analyse(request: ChatRequest):
     - RAGFLOW_ENABLED=false → 使用 Ollama + analyse 系统 prompt
     """
     return await generate_with_type(request, "analyse")
+
+@app.post(
+    "/generate/agent",
+    response_class=StreamingResponse,
+    summary="MCP Agent 对话（可主动查询真实数据）",
+    description=(
+        "基于 Ollama tool-calling + MCP 协议的智能问答：\n"
+        "模型会根据问题自主决定是否调用 MCP 工具（query_energy_data / "
+        "summary_statistics / calculate_cop / detect_anomaly / generate_chart）"
+        "从 Spring Boot 拉取真实数据后再作答。"
+    ),
+    responses={
+        200: {
+            "description": "SSE 流式响应，与 /generate/chat 同格式",
+            "content": {
+                "text/event-stream": {
+                    "example": 'data: {"response": "[MCP工具调用] ...", "done": false}\n\n'
+                }
+            }
+        },
+        503: {"description": "Ollama 服务不可用", "model": ErrorResponse},
+    }
+)
+async def generate_agent(request: ChatRequest):
+    """MCP Agent 显式端点（与 /generate/chat 相同行为，命名更明确便于答辩演示）"""
+    return await _run_agent_response(request, prompt_source="chat")
+
 
 @app.get(
     "/health",

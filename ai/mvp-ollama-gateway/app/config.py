@@ -60,9 +60,20 @@ class Settings:
         self.RAGFLOW_API_KEY: str = os.getenv("RAGFLOW_API_KEY", "")
         self.RAGFLOW_CHAT_ID: str = os.getenv("RAGFLOW_CHAT_ID", "")
 
+        # Spring Boot 后端地址 (MCP tools 通过 HTTP 回调)
+        self.SPRING_BOOT_BASE_URL: str = os.getenv(
+            "SPRING_BOOT_BASE_URL", "http://localhost:8080/api"
+        )
+        self.MCP_HTTP_TIMEOUT: float = float(os.getenv("MCP_HTTP_TIMEOUT", "30"))
+
         # API 服务配置
         self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
         self.API_PORT: int = int(os.getenv("API_PORT", "8000"))
+
+        # MCP 客户端连接的 SSE 端点
+        # Agent 通过真实 MCP 协议 (SSE + JSON-RPC) 回调本进程挂载的 MCP Server
+        default_mcp_sse = f"http://127.0.0.1:{self.API_PORT}/mcp/sse"
+        self.MCP_SSE_URL: str = os.getenv("MCP_SSE_URL", default_mcp_sse)
         
         # 可选：日志级别
         self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
