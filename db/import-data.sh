@@ -4,14 +4,7 @@
 set -e
 
 echo "开始导入CSV数据..."
-
-# 等待PostgreSQL服务启动
-until pg_isready -h localhost -p 5432 -U postgres; do
-    echo "等待PostgreSQL启动..."
-    sleep 2
-done
-
-echo "PostgreSQL已启动，开始导入数据"
+echo "PostgreSQL服务已就绪，开始导入数据"
 
 # CSV文件目录
 CSV_DIR="/data/csv"

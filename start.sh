@@ -112,7 +112,7 @@ check_ollama() {
 
 # 启动 Ragflow
 start_ragflow() {
-    log_info "启动 Ragflow..."
+    log_info "检查 Ragflow 状态..."
     local ragflow_dir="$HOME/myRagflow/ragflow/docker"
     
     if [ ! -d "$ragflow_dir" ]; then
@@ -120,8 +120,16 @@ start_ragflow() {
         exit 1
     fi
     
+    # 检查 Ragflow 是否已经在运行
+    if curl -s http://localhost:9380/api/v1/health > /dev/null 2>&1; then
+        log_success "Ragflow 已在运行"
+        return 0
+    fi
+    
+    log_info "启动 Ragflow..."
+    
     cd "$ragflow_dir"
-    docker compose up --build -d
+    docker compose up -d
     
     local attempt=1
     while [ $attempt -le 30 ]; do
