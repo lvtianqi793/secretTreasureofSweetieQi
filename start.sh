@@ -104,6 +104,10 @@ check_ollama() {
         log_warning "qwen3.5:9b 模型未找到，请运行: ollama pull qwen3.5:9b"
         exit 1
     fi
+    if ! ollama list | grep -q "mxbai-embed-large:latest"; then
+        log_warning "mxbai-embed-large:latest 模型未找到，请运行: ollama pull mxbai-embed-large:latest"
+        exit 1
+    fi
 }
 
 # 启动 Ragflow
