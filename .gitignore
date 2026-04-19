@@ -171,3 +171,5 @@ test-results/
 # 热部署
 spring-devtools.properties
 remote-spring-boot-devtools.properties
+
+data_import_complete
