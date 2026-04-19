@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS import_log (
 );
 
 -- 输出初始化完成信息
-DO $
+DO $$
 BEGIN
     RAISE NOTICE '数据库表结构初始化完成';
-END $;
+END $$;
