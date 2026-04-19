@@ -167,3 +167,6 @@ psql -U postgres -d energy_management -c "
 "
 
 echo "数据导入脚本执行完毕"
+
+# 创建导入完成标记文件，用于健康检查
+touch /tmp/data_import_complete
