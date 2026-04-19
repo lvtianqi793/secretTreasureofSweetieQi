@@ -3,6 +3,13 @@
 
 set -e
 
+# ANSI颜色代码定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 echo "开始导入CSV数据..."
 echo "PostgreSQL服务已就绪，开始导入数据"
 
@@ -121,16 +128,29 @@ import_weather_data() {
     
     echo "导入天气数据: $file_name"
     
-    # 天气数据需要特殊处理，因为列结构不同
+    # 使用单个 psql 命令完成所有操作（同一会话）
     psql -U postgres -d energy_management -c "
-        COPY weather_data(building_id, building_type, monitor_time, temperature_f, humidity_percent, wind_speed_mph, solar_radiation_wm2) 
+        DROP TABLE IF EXISTS temp_weather_data;
+        CREATE TEMP TABLE temp_weather_data (
+            building_id TEXT,
+            monitor_time TIMESTAMP,
+            temperature_c NUMERIC,
+            humidity_pct NUMERIC,
+            wind_speed_ms NUMERIC
+        );
+        
+        COPY temp_weather_data(building_id, monitor_time, temperature_c, humidity_pct, wind_speed_ms)
         FROM '$file_path' 
         WITH (FORMAT csv, HEADER true, DELIMITER ',');
+        
+        INSERT INTO weather_data(building_id, building_type, monitor_time, temperature_c, humidity_pct, wind_speed_ms)
+        SELECT building_id, 'weather_station', monitor_time, temperature_c, humidity_pct, wind_speed_ms
+        FROM temp_weather_data;
     "
     
     # 记录导入日志
     local imported_rows=$(psql -U postgres -d energy_management -t -c "
-        SELECT COUNT(*) FROM weather_data;
+        SELECT COUNT(*) FROM weather_data WHERE building_type = 'weather_station';
     " | tr -d ' ')
     
     psql -U postgres -d energy_management -c "
@@ -166,7 +186,20 @@ psql -U postgres -d energy_management -c "
     ORDER BY table_name;
 "
 
-echo "数据导入脚本执行完毕"
+echo -e "${GREEN}数据导入脚本执行完毕${NC}"
 
 # 创建导入完成标记文件，用于健康检查
-touch /data/status/data_import_complete
+echo "创建导入完成标记文件..."
+if [ ! -d "/data/status" ]; then
+    echo "警告: /data/status 目录不存在，尝试创建"
+    mkdir -p /data/status
+fi
+ 
+if touch /data/status/data_import_complete; then
+    echo -e "${GREEN}导入完成标记文件创建成功${NC}"
+else
+    echo -e "${RED}警告: 无法创建导入完成标记文件，但数据导入已完成${NC}"
+fi
+# 数据导入完成，退出容器
+echo -e "${GREEN}数据导入任务已完成，容器即将退出${NC}"
+exit 0
