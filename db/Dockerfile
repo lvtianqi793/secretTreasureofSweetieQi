@@ -14,10 +14,9 @@ COPY import-data.sh /docker-entrypoint-initdb.d/02-import-data.sh
 RUN chmod +x /docker-entrypoint-initdb.d/02-import-data.sh
 
 # 创建数据目录用于挂载CSV文件和状态标记
-RUN mkdir -p /data/csv
-RUN mkdir -p /data/status
-RUN chown -R postgres:postgres /data
-RUN chmod -R 777 /data
+RUN mkdir -p /data/csv /data/status && \
+    chown -R postgres:postgres /data && \
+    chmod -R 755 /data
 
 # 设置环境变量
 ENV POSTGRES_USER=postgres
