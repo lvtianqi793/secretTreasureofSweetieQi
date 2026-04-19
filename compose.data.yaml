@@ -1,0 +1,37 @@
+# 数据导入专用Docker Compose配置
+# 用于独立启动PostgreSQL容器并导入CSV数据，完成后自动停止
+# 使用方式：docker compose -f compose.data.yaml up --build
+
+services:
+  # PostgreSQL数据库服务（带数据导入）
+  postgres-data-import:
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    ports:
+      - "5432:5432"
+    env_file:
+      - .env.db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./data/csv:/data/csv:ro
+      - import-status:/data/status
+    restart: "no" # 数据导入完成后不重启
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "2.0"
+        reservations:
+          memory: 4G
+          cpus: "1.0"
+
+# 数据卷定义
+volumes:
+  postgres-data: # 持久化PostgreSQL数据
+  import-status: # 临时存储导入状态标记

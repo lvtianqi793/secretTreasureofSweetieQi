@@ -1,0 +1,121 @@
+# 能源管理系统 - 统一Docker Compose配置
+# 包含后端服务、数据库和AI网关服务，所有服务都连接到docker_ragflow网络
+
+services:
+  # Spring Boot后端服务
+  energy-backend:
+    build:
+      context: ./backend # 指向backend目录
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.backend
+    restart: always
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - docker_ragflow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    volumes:
+      - ./logs/backend:/var/log/energy-management # 挂载日志目录
+
+  # PostgreSQL数据库服务（仅运行，不导入数据）
+  postgres-db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    env_file:
+      - .env.db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - import-status:/data/status:ro # 只读挂载状态目录，用于检查导入完成标记
+    restart: always
+    healthcheck:
+      test: [
+          "CMD-SHELL",
+          "pg_isready -U postgres &&
+          ( [ -f /data/status/data_import_complete ] ||
+          (echo 'Database ready but data import not completed' && exit 1) )",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "2.0"
+        reservations:
+          memory: 4G
+          cpus: "1.0"
+    networks:
+      - docker_ragflow
+
+  # AI网关服务 (FastAPI + Ollama)
+  ai-gateway:
+    build:
+      context: ./ai/mvp-ollama-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.aiapi
+    networks:
+      - docker_ragflow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256m
+          cpus: "0.25"
+    volumes:
+      - ./logs/ai-gateway:/var/log/ai-gateway # 挂载日志目录
+
+# 数据卷定义
+volumes:
+  postgres-data: # 持久化PostgreSQL数据
+  import-status: # 临时存储导入状态标记
+
+# 使用外部docker_ragflow网络
+networks:
+  docker_ragflow:
+    external: true
