@@ -1,0 +1,53 @@
+# 数据导入专用Docker Compose配置
+# 用于独立启动PostgreSQL容器并导入CSV数据，完成后自动停止
+# 使用方式：docker compose -f compose.data.yaml up --wait
+
+services:
+  # PostgreSQL数据库服务（带数据导入）
+  postgres-data-import:
+    build:
+      context: ./db
+      dockerfile: Dockerfile
+    ports:
+      - "5432:5432"
+    env_file:
+      - .env.db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./data/csv:/data/csv:ro
+      - ./data/status:/data/status
+    restart: "no" # 数据导入完成后不重启
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres && [ -f /data/status/data_import_complete ]",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10 # 增加重试次数，因为导入可能需要较长时间
+      start_period: 300s # 延长启动等待时间
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: "2.0"
+        reservations:
+          memory: 4G
+          cpus: "1.0"
+    networks:
+      - docker_ragflow
+
+# 数据卷：持久化PostgreSQL数据
+volumes:
+  postgres-data:
+
+# 使用外部docker_ragflow网络
+networks:
+  docker_ragflow:
+    external: true
