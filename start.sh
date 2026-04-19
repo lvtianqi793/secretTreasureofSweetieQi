@@ -109,7 +109,7 @@ check_ollama() {
 # 启动 Ragflow
 start_ragflow() {
     log_info "启动 Ragflow..."
-    local ragflow_dir="$HOME/MyRagflow/ragflow/docker"
+    local ragflow_dir="$HOME/myRagflow/ragflow/docker"
     
     if [ ! -d "$ragflow_dir" ]; then
         log_error "Ragflow 目录不存在: $ragflow_dir"
