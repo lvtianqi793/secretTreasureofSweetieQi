@@ -99,10 +99,9 @@ CREATE TABLE IF NOT EXISTS weather_data (
     building_id VARCHAR(100) NOT NULL,
     building_type VARCHAR(50) NOT NULL,
     monitor_time TIMESTAMP NOT NULL,
-    temperature_f DOUBLE PRECISION,
-    humidity_percent DOUBLE PRECISION,
-    wind_speed_mph DOUBLE PRECISION,
-    solar_radiation_wm2 DOUBLE PRECISION
+    temperature_c DOUBLE PRECISION,
+    humidity_pct DOUBLE PRECISION,
+    wind_speed_ms DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS idx_weather_building ON weather_data(building_id);
 CREATE INDEX IF NOT EXISTS idx_weather_time ON weather_data(monitor_time);

@@ -128,11 +128,34 @@ import_weather_data() {
     
     echo "导入天气数据: $file_name"
     
-    # 天气数据需要特殊处理，因为列结构不同
+    # 创建临时表
     psql -U postgres -d energy_management -c "
-        COPY weather_data(building_id, building_type, monitor_time, temperature_f, humidity_percent, wind_speed_mph, solar_radiation_wm2) 
+        DROP TABLE IF EXISTS temp_weather_data;
+        CREATE TEMP TABLE temp_weather_data (
+            building_id TEXT,
+            monitor_time TIMESTAMP,
+            temperature_c NUMERIC,
+            humidity_pct NUMERIC,
+            wind_speed_ms NUMERIC
+        );
+    "
+    
+    # 从CSV文件导入到临时表
+    psql -U postgres -d energy_management -c "
+        COPY temp_weather_data(building_id, monitor_time, temperature_c, humidity_pct, wind_speed_ms)
         FROM '$file_path' 
         WITH (FORMAT csv, HEADER true, DELIMITER ',');
+    "
+    # 从临时表插入到目标表，building_type 设置为固定值 'weather_station'
+    psql -U postgres -d energy_management -c "
+        INSERT INTO weather_data(building_id, building_type, monitor_time, temperature_c, humidity_pct, wind_speed_ms)
+        SELECT building_id, 'weather_station', monitor_time, temperature_c, humidity_pct, wind_speed_ms
+        FROM temp_weather_data;
+    "
+    
+    # 删除临时表
+    psql -U postgres -d energy_management -c "
+        DROP TABLE temp_weather_data;
     "
     
     # 记录导入日志
