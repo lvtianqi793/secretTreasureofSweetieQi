@@ -187,3 +187,6 @@ if touch /data/status/data_import_complete; then
 else
     echo -e "${RED}警告: 无法创建导入完成标记文件，但数据导入已完成${NC}"
 fi
+# 数据导入完成，退出容器
+echo -e "${GREEN}数据导入任务已完成，容器即将退出${NC}"
+exit 0
