@@ -40,15 +40,8 @@ services:
         reservations:
           memory: 4G
           cpus: "1.0"
-    networks:
-      - docker_ragflow
 
 # 数据卷定义
 volumes:
   postgres-data: # 持久化PostgreSQL数据
   import-status: # 临时存储导入状态标记
-
-# 使用外部docker_ragflow网络
-networks:
-  docker_ragflow:
-    external: true
