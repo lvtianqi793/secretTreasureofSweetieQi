@@ -3,6 +3,13 @@
 
 set -e
 
+# ANSI颜色代码定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 echo "开始导入CSV数据..."
 echo "PostgreSQL服务已就绪，开始导入数据"
 
@@ -166,7 +173,17 @@ psql -U postgres -d energy_management -c "
     ORDER BY table_name;
 "
 
-echo "数据导入脚本执行完毕"
+echo -e "${GREEN}数据导入脚本执行完毕${NC}"
 
 # 创建导入完成标记文件，用于健康检查
-touch /data/status/data_import_complete
+echo "创建导入完成标记文件..."
+if [ ! -d "/data/status" ]; then
+    echo "警告: /data/status 目录不存在，尝试创建"
+    mkdir -p /data/status
+fi
+ 
+if touch /data/status/data_import_complete; then
+    echo -e "${GREEN}导入完成标记文件创建成功${NC}"
+else
+    echo -e "${RED}警告: 无法创建导入完成标记文件，但数据导入已完成${NC}"
+fi
