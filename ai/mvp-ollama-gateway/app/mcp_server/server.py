@@ -15,7 +15,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from fastmcp import FastMCP
 except ImportError as e:
     raise ImportError(
         "MCP SDK 未安装，请执行: pip install 'mcp>=1.2.0'"
