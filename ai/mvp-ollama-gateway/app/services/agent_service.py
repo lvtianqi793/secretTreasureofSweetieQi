@@ -136,15 +136,62 @@ def _build_system_prompt(base_chat_prompt: Optional[str]) -> str:
     return AGENT_TOOL_INSTRUCTIONS
 
 
+# 过滤历史时需要剔除的 MCP 过程噪声前缀（这些只是展示给前端的进度，不能灌回模型上下文）
+_MCP_NOISE_PREFIXES = (
+    "[MCP已连接]",
+    "[MCP tools/call]",
+    "[工具结果]",
+    "[工具错误]",
+    "[已达最大 MCP 工具调用轮次]",
+)
+
+
+def _sanitize_history(history: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """
+    过滤前端回传的历史，仅保留 user/assistant 轮次，并剥离 MCP 过程噪声。
+    - assistant 消息中会被逐行过滤掉以 _MCP_NOISE_PREFIXES 开头的行
+    - 剥离后若 content 为空则整条丢弃
+    - 最多保留最近 20 轮，避免上下文过长
+    """
+    if not history:
+        return []
+    cleaned: List[Dict[str, Any]] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str):
+            continue
+        if role == "assistant":
+            kept_lines = [
+                ln for ln in content.splitlines()
+                if not ln.lstrip().startswith(_MCP_NOISE_PREFIXES)
+            ]
+            content = "\n".join(kept_lines).strip()
+            if not content:
+                continue
+        else:
+            content = content.strip()
+            if not content:
+                continue
+        cleaned.append({"role": role, "content": content})
+    return cleaned[-20:]
+
+
 async def run_agent_stream(
     user_prompt: str,
     model: Optional[str] = None,
     temperature: Optional[float] = None,
     system_prompt_source: str = "chat",
+    history: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncIterator[str]:
     """
     MCP Agent 主循环。以 SSE 分段产出，每段形如
     `data: {"response": "...", "done": false}\\n\\n`
+
+    history: 可选的多轮对话历史（不含当前 user_prompt），每项 {role, content}。
+    注入到 system 之后、当前 user_prompt 之前，由 Ollama 作为完整会话上下文处理。
     """
     use_model = model or settings.OLLAMA_MODEL
 
@@ -155,10 +202,12 @@ async def run_agent_stream(
     if temperature is not None:
         options["temperature"] = temperature
 
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+    prior = _sanitize_history(history)
+    if prior:
+        messages.extend(prior)
+        logger.info(f"[Agent] 注入历史消息 {len(prior)} 条")
+    messages.append({"role": "user", "content": user_prompt})
 
     ollama_timeout = httpx.Timeout(300.0, connect=10.0)
 

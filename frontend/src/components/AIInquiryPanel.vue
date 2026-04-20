@@ -46,11 +46,16 @@ function resolveRequestUrl(): string {
  */
 async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   const url = resolveRequestUrl()
-  // 兼容不同后端：既支持 messages，也支持 question
+  // 后端 AiChatRequest 使用 history 字段 (已 @JsonAlias 接受 messages)
+  // question = 当前轮用户输入；history = 之前所有轮次（不含当前这条 user）
   const lastUserMessage = messages.filter((m) => m.role === 'user').at(-1)
+  const history = messages
+    .slice(0, -1)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({ role: m.role, content: m.content }))
   const payload = {
     question: lastUserMessage?.content ?? '',
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    history,
   }
 
   const res = await fetch(url, {

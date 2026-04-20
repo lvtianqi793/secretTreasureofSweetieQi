@@ -147,6 +147,7 @@ async def _run_agent_response(request: ChatRequest, prompt_source: str = "chat")
             model=request.model,
             temperature=request.temperature,
             system_prompt_source=prompt_source,
+            history=request.messages,
         ):
             yield chunk
 

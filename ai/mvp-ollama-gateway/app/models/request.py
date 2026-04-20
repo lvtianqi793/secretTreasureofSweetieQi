@@ -41,14 +41,21 @@ class ChatRequest(BaseModel):
         description="采样温度，控制随机性，范围 0-2",
         example=0.7
     )
-    
+
+    messages: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="多轮对话历史（不含当前 prompt），每项 {role, content}，role 为 user/assistant/system",
+        example=[{"role": "user", "content": "查询本月能耗"}, {"role": "assistant", "content": "本月总能耗 1234 kWh"}]
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
                 "prompt": "你好，请介绍一下自己",
                 "model": "qwen3.5:2b",
                 "stream": True,
-                "temperature": 0.7
+                "temperature": 0.7,
+                "messages": []
             }
         }
 
