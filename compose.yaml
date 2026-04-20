@@ -109,11 +109,13 @@ services:
           cpus: "0.25"
     volumes:
       - ./logs/ai-gateway:/var/log/ai-gateway # 挂载日志目录
+      - exports-data:/app/exports # 挂载导出目录，用于前端下载
 
 # 数据卷定义
 volumes:
   postgres-data: # 持久化PostgreSQL数据
   import-status: # 临时存储导入状态标记
+  exports-data: # 导出目录数据卷，用于挂载到容器内
 
 # 使用外部docker_ragflow网络
 networks:

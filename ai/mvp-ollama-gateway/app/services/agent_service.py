@@ -33,12 +33,11 @@ except ImportError as e:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# 最大工具调用轮次，防止模型死循环
-MAX_AGENT_STEPS = 6
-
-# 过程流中对参数/结果的预览长度（避免前端 UI 被刷屏）
-PREVIEW_ARGS_LIMIT = 200
-PREVIEW_RESULT_LIMIT = 400
+# 替换硬编码
+MAX_AGENT_STEPS = settings.MAX_AGENT_STEPS
+PREVIEW_ARGS_LIMIT = settings.PREVIEW_ARGS_LIMIT
+PREVIEW_RESULT_LIMIT = settings.PREVIEW_RESULT_LIMIT
+OLLAMA_TIMEOUT = httpx.Timeout(settings.OLLAMA_TIMEOUT, connect=10.0)
 
 AGENT_TOOL_INSTRUCTIONS = """你现在通过 MCP 协议接入了建筑能源管理系统的工具集。
 可用工具：
@@ -160,8 +159,6 @@ async def run_agent_stream(
         {"role": "user", "content": user_prompt},
     ]
 
-    ollama_timeout = httpx.Timeout(300.0, connect=10.0)
-
     try:
         # 1) 打开真实 MCP SSE 客户端会话 → 本进程 /mcp/sse
         logger.info(f"[Agent] 连接 MCP Server: {settings.MCP_SSE_URL}")
@@ -181,7 +178,7 @@ async def run_agent_stream(
                 })
 
                 # 4) 进入 Ollama ↔ MCP 工具调用循环
-                async with httpx.AsyncClient(timeout=ollama_timeout) as ollama:
+                async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as ollama:
                     for step in range(MAX_AGENT_STEPS):
                         logger.info(f"[Agent] step={step + 1} messages={len(messages)}")
 

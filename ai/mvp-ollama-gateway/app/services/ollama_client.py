@@ -22,7 +22,8 @@ class OllamaClient:
         self.base_url = settings.OLLAMA_URL.rstrip("/")
         self.default_model = settings.OLLAMA_MODEL
         self.generate_endpoint = f"{self.base_url}/api/generate"
-        self.timeout = httpx.Timeout(60.0, connect=10.0)
+        # 使用配置的超时值
+        self.timeout = httpx.Timeout(settings.OLLAMA_TIMEOUT, connect=10.0)
     
     def _get_system_prompt_by_type(self, prompt_type: Optional[str] = None) -> Optional[str]:
         """

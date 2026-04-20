@@ -40,6 +40,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
+# Create exports directory and set permissions for the non-privileged user.
+# This directory is used by MCP tools (export_report, export_chart) to save generated files.
+RUN mkdir -p /app/exports && \
+    chown -R appuser:appuser /app/exports && \
+    chmod 755 /app/exports
+
 # Switch to the non-privileged user to run the application.
 USER appuser
 

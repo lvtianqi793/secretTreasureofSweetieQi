@@ -32,7 +32,8 @@ class RagflowClient:
         self.chat_id = settings.RAGFLOW_CHAT_ID
         # 关键修复：修正端点路径，添加 chats/ 和 chat_id
         self.chat_endpoint = f"{self.base_url}/api/v1/chats/{self.chat_id}/completions"
-        self.timeout = httpx.Timeout(60.0, connect=10.0)
+        # 使用配置的超时值
+        self.timeout = httpx.Timeout(settings.RAGFLOW_TIMEOUT, connect=10.0)
     
     def _build_headers(self) -> Dict[str, str]:
         """
