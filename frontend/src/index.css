@@ -1055,6 +1055,52 @@ body {
   gap: 0.85rem;
 }
 
+.stats-chart-slot {
+  flex: 1;
+  min-height: 360px;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.stats-chart-slot > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.stats-chart-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 360px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.stats-chart-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent, #4c9cff);
+  border-radius: 50%;
+  animation: stats-chart-spin 0.9s linear infinite;
+}
+
+.stats-chart-loading__text {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+@keyframes stats-chart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .stats-export-hint {
   margin: 0;
   padding: 0 1.25rem 1.1rem;

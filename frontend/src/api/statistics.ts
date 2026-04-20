@@ -83,6 +83,13 @@ export function getEnergyOptions() {
   return fetchJson<EnergyOptionsPayload>('/api/energy/options')
 }
 
+export type BuildingInfo = { buildingId: string; buildingType: string }
+
+/** GET /api/energy/buildings — 建筑列表（含建筑类型，供下拉选择） */
+export function getBuildings() {
+  return fetchJson<BuildingInfo[]>('/api/energy/buildings')
+}
+
 function buildQuery(params: Record<string, string | number | undefined | null>) {
   const q = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {

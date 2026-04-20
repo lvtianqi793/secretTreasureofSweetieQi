@@ -55,6 +55,18 @@ function calcLabelInterval(len: number) {
   return Math.ceil(len / 20)
 }
 
+function formatCompactNumber(v: number): string {
+  if (!Number.isFinite(v)) return ''
+  const abs = Math.abs(v)
+  const sign = v < 0 ? '-' : ''
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(abs >= 1e10 ? 1 : 2)}B`
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(abs >= 1e7 ? 1 : 2)}M`
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(abs >= 1e4 ? 1 : 2)}K`
+  if (abs >= 1) return `${sign}${abs.toFixed(abs >= 100 ? 0 : abs >= 10 ? 1 : 2)}`
+  if (abs === 0) return '0'
+  return `${sign}${abs.toPrecision(2)}`
+}
+
 function buildOption(data: ChartPayload): echarts.EChartsOption {
   const unit = data.unit ?? ''
   const textColor = '#e8edf4'
@@ -112,10 +124,13 @@ function buildOption(data: ChartPayload): echarts.EChartsOption {
         axisPointer: { type: 'line' },
       },
       legend: { bottom: 4, textStyle: { color: muted } },
-      grid: { left: 56, right: 20, top: 48, bottom: 72 },
+      grid: { left: 64, right: 24, top: 48, bottom: 72 },
       xAxis: {
         type: 'category',
         data: categories,
+        boundaryGap: false,
+        axisLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+        axisTick: { show: true, alignWithLabel: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
         axisLabel: {
           color: muted,
           rotate: categories.length > 18 ? 35 : 0,
@@ -127,7 +142,13 @@ function buildOption(data: ChartPayload): echarts.EChartsOption {
         type: 'value',
         name: unit,
         nameTextStyle: { color: muted },
-        axisLabel: { color: muted },
+        scale: true,
+        axisLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+        axisTick: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+        axisLabel: {
+          color: muted,
+          formatter: (v: number) => formatCompactNumber(v),
+        },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
       },
       series: data.series.map((s) => ({
@@ -153,10 +174,12 @@ function buildOption(data: ChartPayload): echarts.EChartsOption {
       axisPointer: { type: 'shadow' },
     },
     legend: { bottom: 4, textStyle: { color: muted } },
-    grid: { left: 56, right: 20, top: 48, bottom: 72 },
+    grid: { left: 64, right: 24, top: 48, bottom: 72 },
     xAxis: {
       type: 'category',
       data: categories,
+      axisLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+      axisTick: { show: true, alignWithLabel: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
       axisLabel: {
         color: muted,
         rotate: categories.length > 14 ? 30 : 0,
@@ -168,7 +191,12 @@ function buildOption(data: ChartPayload): echarts.EChartsOption {
       type: 'value',
       name: unit,
       nameTextStyle: { color: muted },
-      axisLabel: { color: muted },
+      axisLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+      axisTick: { show: true, lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+      axisLabel: {
+        color: muted,
+        formatter: (v: number) => formatCompactNumber(v),
+      },
       splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
     },
     series: data.series.map((s) => ({

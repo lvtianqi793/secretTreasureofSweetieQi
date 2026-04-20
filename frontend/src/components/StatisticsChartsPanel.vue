@@ -8,10 +8,12 @@ import {
 } from 'vue'
 import ChartPreviewCard from './ChartPreviewCard.vue'
 import {
+  type BuildingInfo,
   type ChartPayload,
   type ChartRequest,
   type EnergyQueryExportBody,
   type EnergyTypeOption,
+  getBuildings,
   getEnergyOptions,
   type StatisticsExportBody,
   downloadBlob,
@@ -32,11 +34,11 @@ const mainTab = ref<'view' | 'export'>('view')
 
 const loading = ref(false)
 const error = ref<string | null>(null)
-const chartHistory = ref<Array<{ id: string; payload: ChartPayload; createdAt: number }>>([])
-const MAX_CHART_CARDS = 20
+const currentChart = ref<{ id: string; payload: ChartPayload; createdAt: number } | null>(null)
 
 const energyTypeOptions = ref<EnergyTypeOption[]>([])
 const buildingTypeOptions = ref<string[]>([])
+const buildingOptions = ref<BuildingInfo[]>([])
 
 /** 与后端 ChartService 支持的粒度一致 */
 const GRANULARITY_OPTIONS = [
@@ -69,7 +71,6 @@ const rankBuilding = ref('')
 
 // —— 快捷：饼图
 const pieEnergy = ref('water')
-const pieBuildingType = ref('')
 const pieStart = ref('2016-01-01T00:00')
 const pieEnd = ref('2016-12-31T23:59')
 
@@ -103,7 +104,7 @@ const expRaw = ref<EnergyQueryExportBody>({
   sortOrder: 'desc',
 })
 
-const chartTitle = computed(() => (chartHistory.value.length ? '已生成图表' : '图表预览'))
+const chartTitle = computed(() => (currentChart.value ? '已生成图表' : '图表预览'))
 
 const expReportStart = computed<string>({
   get: () => expReport.value.startTime ?? '',
@@ -152,17 +153,17 @@ function toBackendDateTime(local: string, edge: 'start' | 'end') {
 
 function renderChart(data: ChartPayload) {
   const now = Date.now()
-  chartHistory.value.unshift({
+  currentChart.value = {
     id: `${now}_${Math.random().toString(16).slice(2)}`,
     payload: data,
     createdAt: now,
-  })
-  if (chartHistory.value.length > MAX_CHART_CARDS) chartHistory.value.length = MAX_CHART_CARDS
+  }
 }
 
 async function loadTrend() {
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartTrend({
       energyType: trendEnergy.value,
@@ -182,6 +183,7 @@ async function loadTrend() {
 async function loadRanking() {
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartRanking({
       energyType: rankEnergy.value,
@@ -201,10 +203,10 @@ async function loadRanking() {
 async function loadPie() {
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartPie({
       energyType: pieEnergy.value,
-      buildingType: pieBuildingType.value || undefined,
       startTime: (pieStart.value && toBackendDateTime(pieStart.value, 'start')) || undefined,
       endTime: (pieEnd.value && toBackendDateTime(pieEnd.value, 'end')) || undefined,
     })
@@ -226,6 +228,13 @@ onMounted(() => {
       // ignore options load errors; fall back to manual input
     }
   })()
+  void (async () => {
+    try {
+      buildingOptions.value = (await getBuildings()) ?? []
+    } catch {
+      // ignore; building dropdowns will just be empty
+    }
+  })()
   void loadTrend()
 })
 
@@ -234,6 +243,7 @@ onUnmounted(() => {
 
 watch(chartTab, (t) => {
   error.value = null
+  currentChart.value = null
   if (t === 'trend') void loadTrend()
   if (t === 'ranking') void loadRanking()
   if (t === 'pie') void loadPie()
@@ -362,7 +372,11 @@ async function doExportRaw() {
         <div v-if="chartTab === 'trend'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="trendEnergy" class="csv-input" list="energy-types" placeholder="例如 electricity" />
+            <select v-model="trendEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>粒度</span>
@@ -381,8 +395,13 @@ async function doExportRaw() {
             <input v-model="trendEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
-            <span>建筑 ID（可选）</span>
-            <input v-model="trendBuilding" class="csv-input" placeholder="留空表示全部" />
+            <span>建筑（可选）</span>
+            <select v-model="trendBuilding" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
           <button type="button" class="stats-btn" :disabled="loading" @click="loadTrend">查询</button>
         </div>
@@ -390,7 +409,11 @@ async function doExportRaw() {
         <div v-if="chartTab === 'ranking'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="rankEnergy" class="csv-input" list="energy-types" />
+            <select v-model="rankEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>Top N</span>
@@ -405,8 +428,13 @@ async function doExportRaw() {
             <input v-model="rankEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
-            <span>建筑 ID（可选）</span>
-            <input v-model="rankBuilding" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="rankBuilding" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
           <button type="button" class="stats-btn" :disabled="loading" @click="loadRanking">查询</button>
         </div>
@@ -414,11 +442,11 @@ async function doExportRaw() {
         <div v-if="chartTab === 'pie'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="pieEnergy" class="csv-input" list="energy-types" />
-          </label>
-          <label class="stats-field stats-field--wide">
-            <span>建筑类型（可选）</span>
-            <input v-model="pieBuildingType" class="csv-input" list="building-types" />
+            <select v-model="pieEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>开始</span>
@@ -436,13 +464,17 @@ async function doExportRaw() {
             <span class="stats-chart-head__title">{{ chartTitle }}</span>
             <span v-if="loading" class="stats-chart-head__meta">加载中…</span>
           </div>
-          <div v-if="!chartHistory.length && !loading" class="stats-chart-empty">点击上方「查询」生成图表卡片。</div>
-          <div class="stats-chart-cards">
+          <div class="stats-chart-slot">
+            <div v-if="loading" class="stats-chart-loading" role="status" aria-live="polite">
+              <span class="stats-chart-loading__spinner" aria-hidden="true" />
+              <span class="stats-chart-loading__text">图表加载中…</span>
+            </div>
+            <div v-else-if="!currentChart" class="stats-chart-empty">点击上方「查询」生成图表。</div>
             <ChartPreviewCard
-              v-for="c in chartHistory"
-              :key="c.id"
-              :payload="c.payload"
-              :created-at="c.createdAt"
+              v-else
+              :key="currentChart.id"
+              :payload="currentChart.payload"
+              :created-at="currentChart.createdAt"
             />
           </div>
         </div>
