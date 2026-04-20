@@ -17,8 +17,7 @@ from app.mcp_server.server import mcp, call_backend, download_backend
 
 
 # 导出文件落盘目录（项目根目录下 exports/）
-EXPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "exports"
-EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+EXPORTS_DIR = Path(settings.EXPORTS_DIR)
 
 
 def _download_url(filename: str) -> str:

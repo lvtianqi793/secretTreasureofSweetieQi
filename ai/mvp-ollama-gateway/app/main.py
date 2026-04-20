@@ -22,6 +22,8 @@ from app.services.ollama_client import get_ollama_client
 from app.services.ragflow_client import get_ragflow_client, RagflowNoDocumentsException
 from app.mcp_server import mcp as mcp_server
 
+# 使用配置的路径
+EXPORTS_DIR = Path(settings.EXPORTS_DIR)
 
 # 配置日志
 logging.basicConfig(
@@ -102,9 +104,9 @@ app.mount("/mcp", mcp_server.sse_app())
 
 # 挂载 /exports 静态目录：MCP export_report / export_chart 工具
 # 把后端生成的 xlsx/csv 落盘后，用户通过 http://host:port/exports/<filename> 下载
-_EXPORTS_DIR = Path(__file__).resolve().parent.parent / "exports"
-_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/exports", StaticFiles(directory=str(_EXPORTS_DIR)), name="exports")
+# 确保目录存在，避免 StaticFiles 抛出 RuntimeError
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(settings.EXPORTS_URL_PATH, StaticFiles(directory=str(EXPORTS_DIR)), name="exports")
 
 
 async def generate_with_type(request: ChatRequest, prompt_type: str):

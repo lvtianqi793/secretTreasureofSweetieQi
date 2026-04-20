@@ -69,6 +69,7 @@ data/csv/*.xls
 *.sqlite
 *.sqlite3
 *.log
+logs/
 *.tmp
 *.temp
 
@@ -89,6 +90,7 @@ docker-compose.override.yml
 # ==========================================
 
 # 编译输出
+backend/target/
 target/
 *.class
 
@@ -101,6 +103,7 @@ release.properties
 dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
+http-client.private.env.json
 
 # Gradle 相关
 .gradle/
@@ -173,3 +176,7 @@ spring-devtools.properties
 remote-spring-boot-devtools.properties
 
 data_import_complete
+
+*.xlsx
+
+!.gitkeep

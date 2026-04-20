@@ -65,6 +65,9 @@ class Settings:
             "SPRING_BOOT_BASE_URL", "http://localhost:8080/api"
         )
         self.MCP_HTTP_TIMEOUT: float = float(os.getenv("MCP_HTTP_TIMEOUT", "30"))
+        
+        # RAGFlow 超时配置
+        self.RAGFLOW_TIMEOUT: float = float(os.getenv("RAGFLOW_TIMEOUT", "60.0"))
 
         # API 服务配置
         self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
@@ -77,6 +80,24 @@ class Settings:
         
         # 可选：日志级别
         self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+        
+        # 建议新增：Agent 控制参数
+        self.MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "6"))
+        self.PREVIEW_ARGS_LIMIT: int = int(os.getenv("PREVIEW_ARGS_LIMIT", "200"))
+        self.PREVIEW_RESULT_LIMIT: int = int(os.getenv("PREVIEW_RESULT_LIMIT", "400"))
+        self.OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "300.0"))
+        
+        # 导出目录配置：优先环境变量，其次默认值
+        self.EXPORTS_DIR: str = os.getenv(
+            "EXPORTS_DIR", 
+            "/app/exports"  # 容器内默认路径
+        )
+        
+        # 可选：导出目录 URL 路径（用于生成下载链接）
+        self.EXPORTS_URL_PATH: str = os.getenv(
+            "EXPORTS_URL_PATH",
+            "/exports"  # 默认挂载路径
+        )
     
     def _resolve_prompt_path(self, env_var: str, default_relative_path: str) -> Path:
         """
