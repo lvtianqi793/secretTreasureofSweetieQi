@@ -278,19 +278,25 @@ class RagflowClient:
         """
         检查 RAGFlow 服务是否可连接
         
-        通过尝试获取对话列表或轻量级请求验证
+        使用官方推荐的 /api/v1/system/healthz 端点检查所有依赖服务状态
+        包括数据库、Redis、文档引擎、对象存储
         
         Returns:
-            是否连接成功
+            是否连接成功（所有服务都健康）
         """
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 response = await client.get(
-                    f"{self.base_url}/api/v1/chats",
-                    headers=self._build_headers(),
-                    params={"page": 1, "page_size": 1}
+                    f"{self.base_url}/api/v1/system/healthz",
+                    headers={"Content-Type": "application/json"}
                 )
-                return response.status_code == 200
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # 检查整体状态是否为 "ok"
+                    return data.get("status") == "ok"
+                
+                return False
         except Exception:
             return False
 
