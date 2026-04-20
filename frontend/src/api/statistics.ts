@@ -19,6 +19,7 @@ export type ChartRequest = {
   buildingId?: string
   buildingType?: string
   topN?: number
+  dimension?: 'time' | 'building' | 'type'
 }
 
 export type StatisticsExportBody = {
@@ -43,8 +44,7 @@ export type EnergyQueryExportFields = {
   endTime?: string
   minValue?: number
   maxValue?: number
-  page?: number
-  pageSize?: number
+  maxRows?: number
   sortBy?: string
   sortOrder?: string
 }
@@ -169,10 +169,13 @@ export async function postChartExport(body: ChartRequest) {
 
 /** POST /api/energy/query/export — 原始记录 */
 export async function postEnergyQueryExport(body: EnergyQueryExportBody) {
-  const res = await fetch('/api/energy/query/export', {
+  const { format, maxRows, ...rest } = body
+  const qs = buildQuery({ format, maxRows })
+  const url = qs ? `/api/energy/query/export?${qs}` : '/api/energy/query/export'
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(rest),
   })
   if (!res.ok) {
     const t = await res.text()

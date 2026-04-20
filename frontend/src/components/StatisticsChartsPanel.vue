@@ -35,6 +35,7 @@ const mainTab = ref<'view' | 'export'>('view')
 const loading = ref(false)
 const error = ref<string | null>(null)
 const currentChart = ref<{ id: string; payload: ChartPayload; createdAt: number } | null>(null)
+const exporting = ref<null | 'report' | 'chart' | 'raw'>(null)
 
 const energyTypeOptions = ref<EnergyTypeOption[]>([])
 const buildingTypeOptions = ref<string[]>([])
@@ -90,7 +91,33 @@ const expChart = ref<ChartRequest>({
   granularity: 'month',
   startTime: '2016-01-01T00:00',
   endTime: '2016-12-31T23:59',
+  dimension: 'time',
+  topN: 10,
 })
+
+const CHART_TYPE_OPTIONS = [
+  { value: 'line', label: '折线图' },
+  { value: 'bar', label: '柱状图' },
+  { value: 'pie', label: '饼图' },
+] as const
+
+const PIE_GROUP_OPTIONS = [
+  { value: 'building', label: '建筑' },
+  { value: 'type', label: '建筑类型' },
+] as const
+
+watch(
+  () => expChart.value.chartType,
+  (t) => {
+    if (t === 'pie') {
+      if (expChart.value.dimension !== 'building' && expChart.value.dimension !== 'type') {
+        expChart.value.dimension = 'building'
+      }
+    } else {
+      expChart.value.dimension = 'time'
+    }
+  }
+)
 
 // —— 导出：原始记录
 const expRaw = ref<EnergyQueryExportBody>({
@@ -98,8 +125,7 @@ const expRaw = ref<EnergyQueryExportBody>({
   format: 'xlsx',
   startTime: '2016-01-01T00:00',
   endTime: '2016-12-31T23:59',
-  page: 1,
-  pageSize: 5000,
+  maxRows: 10000,
   sortBy: 'monitor_time',
   sortOrder: 'desc',
 })
@@ -250,7 +276,8 @@ watch(chartTab, (t) => {
 })
 
 async function doExportReport() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'report'
   error.value = null
   try {
     const blob = await postStatisticsExport({
@@ -265,12 +292,13 @@ async function doExportReport() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 
 async function doExportChart() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'chart'
   error.value = null
   try {
     const blob = await postChartExport({
@@ -282,12 +310,13 @@ async function doExportChart() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 
 async function doExportRaw() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'raw'
   error.value = null
   try {
     const blob = await postEnergyQueryExport({
@@ -300,7 +329,7 @@ async function doExportRaw() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 </script>
@@ -520,7 +549,11 @@ async function doExportRaw() {
           </label>
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expReport.energyType" class="csv-input" list="energy-types" />
+            <select v-model="expReport.energyType" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>粒度</span>
@@ -539,30 +572,56 @@ async function doExportRaw() {
             <input v-model="expReportEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
-            <span>建筑 ID</span>
-            <input v-model="expReport.buildingId" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="expReport.buildingId" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportReport">导出统计报表</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'report' }"
+            :disabled="exporting !== null"
+            @click="doExportReport"
+          >
+            <span v-if="exporting === 'report'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'report' ? '正在导出中…' : '导出统计报表' }}
+          </button>
         </div>
 
         <div v-if="exportTab === 'chart'" class="stats-form stats-form--generic">
           <label class="stats-field">
             <span>图表类型</span>
             <select v-model="expChart.chartType" class="csv-input">
-              <option value="line">line</option>
-              <option value="bar">bar</option>
-              <option value="pie">pie</option>
+              <option v-for="c in CHART_TYPE_OPTIONS" :key="c.value" :value="c.value">
+                {{ c.label }}
+              </option>
             </select>
           </label>
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expChart.energyType" class="csv-input" list="energy-types" />
+            <select v-model="expChart.energyType" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
-          <label class="stats-field">
+          <label v-if="expChart.chartType !== 'pie'" class="stats-field">
             <span>粒度</span>
             <select v-model="expChart.granularity" class="csv-input">
               <option v-for="g in GRANULARITY_OPTIONS" :key="g.value" :value="g.value">
                 {{ g.label }}
+              </option>
+            </select>
+          </label>
+          <label v-if="expChart.chartType === 'pie'" class="stats-field">
+            <span>分组维度</span>
+            <select v-model="expChart.dimension" class="csv-input">
+              <option v-for="d in PIE_GROUP_OPTIONS" :key="d.value" :value="d.value">
+                {{ d.label }}
               </option>
             </select>
           </label>
@@ -574,17 +633,33 @@ async function doExportRaw() {
             <span>结束</span>
             <input v-model="expChartEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
-          <label class="stats-field">
+          <label
+            v-if="expChart.chartType === 'pie' && expChart.dimension === 'building'"
+            class="stats-field"
+          >
             <span>Top N</span>
-            <input v-model.number="expChart.topN" class="csv-input" type="number" />
+            <input v-model.number="expChart.topN" class="csv-input" type="number" min="1" max="100" />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportChart">导出图表 Excel</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'chart' }"
+            :disabled="exporting !== null"
+            @click="doExportChart"
+          >
+            <span v-if="exporting === 'chart'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'chart' ? '正在导出中…' : '导出图表 Excel' }}
+          </button>
         </div>
 
         <div v-if="exportTab === 'raw'" class="stats-form stats-form--generic">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expRaw.energyType" class="csv-input" list="energy-types" required />
+            <select v-model="expRaw.energyType" class="csv-input" required>
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>格式</span>
@@ -602,14 +677,34 @@ async function doExportRaw() {
             <input v-model="expRawEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
-            <span>建筑 ID</span>
-            <input v-model="expRaw.buildingId" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="expRaw.buildingId" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
-            <span>每页条数</span>
-            <input v-model.number="expRaw.pageSize" class="csv-input" type="number" min="1" />
+            <span>最大导出量</span>
+            <input
+              v-model.number="expRaw.maxRows"
+              class="csv-input"
+              type="number"
+              min="1"
+              max="1000000"
+            />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportRaw">导出原始记录</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'raw' }"
+            :disabled="exporting !== null"
+            @click="doExportRaw"
+          >
+            <span v-if="exporting === 'raw'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'raw' ? '正在导出中…' : '导出原始记录' }}
+          </button>
         </div>
       </template>
     </div>
