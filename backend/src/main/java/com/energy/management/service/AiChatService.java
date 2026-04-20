@@ -47,87 +47,23 @@ public class AiChatService {
     private static final int MAX_ROWS = 1000;
 
     /**
-     * 处理用户AI对话请求 (核心流程)
+     * 处理用户AI对话请求 (核心流程 - 基于 MCP 协议)
+     *
+     * 通过 FastAPI /generate/agent → MCP 协议：
+     *   Ollama tool-calling 自主决定是否调用 MCP 工具
+     *   (query_energy_data / summary_statistics / calculate_cop /
+     *    detect_anomaly / generate_chart) 回调本服务获取真实数据后作答。
      */
     @Transactional(readOnly = true)
     public AiChatResponse chat(AiChatRequest request) {
         String question = request.getQuestion();
-        log.info("收到用户问题: {}", question);
+        log.info("收到用户问题(MCP Agent): {}", question);
 
         try {
-            // === 第一步: 调用 /generate/generatesql 生成SQL ===
-            String sqlPrompt = DatabaseSchema.SQL_EXTRACTION_PROMPT + "\n\n用户问题: " + question;
-            String aiFirstResponse = aiService.generateSql(sqlPrompt, request.getHistory());
-
-            log.debug("AI第一轮回复: {}", aiFirstResponse);
-
-            // 解析AI返回的JSON
-            JsonNode parsed = parseAiJson(aiFirstResponse);
-
-            boolean needQuery = parsed.has("needQuery") && parsed.get("needQuery").asBoolean();
-            String chartType = parsed.has("chartType") ? parsed.get("chartType").asText("none") : "none";
-
-            if (!needQuery) {
-                // 不需要查询数据库, 直接返回AI回答 (运维知识问答)
-                String answer = parsed.has("answer") ? parsed.get("answer").asText() : aiFirstResponse;
-                return new AiChatResponse(answer, false, null, null, chartType);
-            }
-
-            // === 第二步: 提取SQL并执行 ===
-            String sql = parsed.get("sql").asText();
-            log.info("AI生成的SQL: {}", sql);
-
-            // 安全校验
-            if (!validateSql(sql)) {
-                return new AiChatResponse(
-                        "检测到不安全的SQL操作，已拒绝执行。系统仅支持数据查询操作。",
-                        false, sql, null, "none"
-                );
-            }
-
-            // 执行SQL查询
-            List<Map<String, Object>> queryResults = executeNativeQuery(sql);
-            log.info("查询返回 {} 条记录", queryResults.size());
-
-            // === 第三步: 调用 /generate/analyse 分析查询结果 ===
-            String resultJson = objectMapper.writeValueAsString(queryResults);
-            // 截断过长的结果 (避免超出token限制)
-            if (resultJson.length() > 8000) {
-                resultJson = resultJson.substring(0, 8000) + "...(数据已截断, 共" + queryResults.size() + "条)";
-            }
-
-            String analysisPrompt = String.format(
-                    DatabaseSchema.ANALYSIS_PROMPT_TEMPLATE,
-                    question, sql, resultJson
-            );
-
-            String analysisResponse;
-            try {
-                analysisResponse = aiService.analyse(analysisPrompt);
-            } catch (Exception analyseEx) {
-                log.warn("AI分析接口调用失败，降级到运维知识接口: {}", analyseEx.getMessage());
-                // 降级: 将查询到的数据传递给运维知识接口
-                String dataSummaryPrompt = String.format(
-                        "用户问题: %s\n\n" +
-                        "已执行的SQL: %s\n\n" +
-                        "查询到的数据(共%d条):\n%s\n\n" +
-                        "请基于你的建筑能源运维知识，对上述数据进行分析和解读，回答用户的问题。",
-                        question, sql, queryResults.size(), resultJson
-                );
-                analysisResponse = aiService.chatOps(dataSummaryPrompt, null) +
-                        "\n\n(注: AI数据分析服务暂不可用，以上为基于运维知识库的分析)";
-            }
-
-            return new AiChatResponse(
-                    analysisResponse,
-                    true,
-                    sql,
-                    queryResults.size() > 200 ? queryResults.subList(0, 200) : queryResults,
-                    chartType
-            );
-
+            String answer = aiService.chatAgent(question, request.getHistory());
+            return new AiChatResponse(answer, true, null, null, "none");
         } catch (Exception e) {
-            log.error("AI对话处理异常", e);
+            log.error("MCP Agent 处理异常", e);
             // 降级: 尝试用运维知识接口直接回答
             try {
                 String fallbackAnswer = aiService.chatOps(
@@ -135,7 +71,7 @@ public class AiChatService {
                         null
                 );
                 return new AiChatResponse(
-                        fallbackAnswer + "\n\n(注: 数据查询暂时不可用, 以上为基于知识库的回答)",
+                        fallbackAnswer + "\n\n(注: MCP 数据查询暂时不可用, 以上为基于知识库的回答)",
                         false, null, null, "none"
                 );
             } catch (Exception fallbackEx) {
