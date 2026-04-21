@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  * 4. 调用 /generate/analyse 分析查询结果
  * 5. 返回最终结果给前端
  *
- * 运维知识问答: 直接调用 /generate/chat
+ * 知识库问答: 调用 /generate/analyse (RAGFlow 检索增强, 无命中时降级到 Ollama)
  */
 @Slf4j
 @Service
@@ -84,15 +84,16 @@ public class AiChatService {
     }
 
     /**
-     * 运维知识问答 (调用 /generate/chat, 不涉及数据库查询)
+     * 知识库 / 运维问答 (调用 /generate/analyse, 由 FastAPI 路由到 RAGFlow 知识库,
+     * RAGFlow 未启用或无命中文档时自动降级到 Ollama + system_analyse_prompt)。
      */
     public AiChatResponse opsChat(AiChatRequest request) {
         try {
-            String answer = aiService.chatOps(request.getQuestion(), request.getHistory());
+            String answer = aiService.analyse(request.getQuestion(), request.getHistory());
             return new AiChatResponse(answer, false, null, "none");
         } catch (Exception e) {
-            log.error("运维问答异常", e);
-            return new AiChatResponse("运维助手暂时不可用: " + e.getMessage(),
+            log.error("知识库问答异常", e);
+            return new AiChatResponse("知识库助手暂时不可用: " + e.getMessage(),
                     false, null, "none");
         }
     }

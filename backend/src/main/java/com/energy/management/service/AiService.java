@@ -45,10 +45,15 @@ public class AiService {
     }
 
     /**
-     * 数据分析 → /generate/analyse
+     * 数据分析 / 知识库问答 → /generate/analyse
+     * 启用 RAGFlow 时会走 RAGFlow 检索增强；未启用或无相关文档时 FastAPI 侧自动降级到 Ollama。
      */
     public String analyse(String prompt) {
-        return callAi("/generate/analyse", prompt, null);
+        return analyse(prompt, null);
+    }
+
+    public String analyse(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/analyse", prompt, history);
     }
 
     /**
