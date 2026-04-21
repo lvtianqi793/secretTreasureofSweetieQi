@@ -121,7 +121,7 @@ start_ragflow() {
     fi
     
     # 检查 Ragflow 是否已经在运行
-    if curl -s -f http://localhost:9380/api/v1/system/healthz > /dev/null 2>&1; then
+    if curl -s http://localhost:9380/api/v1/health > /dev/null 2>&1; then
         log_success "Ragflow 已在运行"
         return 0
     fi
