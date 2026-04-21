@@ -22,7 +22,7 @@ EXPORTS_DIR = Path(settings.EXPORTS_DIR)
 
 def _download_url(filename: str) -> str:
     """生成 exports/ 下文件的公开下载 URL（供用户点击下载）"""
-    host = settings.API_HOST
+    host = settings.DOWNLOAD_HOST
     if host in ("0.0.0.0", "", None):
         host = "localhost"
     return f"http://{host}:{settings.API_PORT}/exports/{filename}"
