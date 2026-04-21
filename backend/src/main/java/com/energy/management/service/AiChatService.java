@@ -61,7 +61,7 @@ public class AiChatService {
 
         try {
             String answer = aiService.chatAgent(question, request.getHistory());
-            return new AiChatResponse(answer, true, null, null, "none");
+            return new AiChatResponse(answer, true, null, "none");
         } catch (Exception e) {
             log.error("MCP Agent 处理异常", e);
             // 降级: 尝试用运维知识接口直接回答
@@ -72,12 +72,12 @@ public class AiChatService {
                 );
                 return new AiChatResponse(
                         fallbackAnswer + "\n\n(注: MCP 数据查询暂时不可用, 以上为基于知识库的回答)",
-                        false, null, null, "none"
+                        false, null, "none"
                 );
             } catch (Exception fallbackEx) {
                 return new AiChatResponse(
                         "处理您的问题时遇到异常: " + e.getMessage() + "\n请尝试换一种方式提问。",
-                        false, null, null, "none"
+                        false, null, "none"
                 );
             }
         }
@@ -89,11 +89,11 @@ public class AiChatService {
     public AiChatResponse opsChat(AiChatRequest request) {
         try {
             String answer = aiService.chatOps(request.getQuestion(), request.getHistory());
-            return new AiChatResponse(answer, false, null, null, "none");
+            return new AiChatResponse(answer, false, null, "none");
         } catch (Exception e) {
             log.error("运维问答异常", e);
             return new AiChatResponse("运维助手暂时不可用: " + e.getMessage(),
-                    false, null, null, "none");
+                    false, null, "none");
         }
     }
 
