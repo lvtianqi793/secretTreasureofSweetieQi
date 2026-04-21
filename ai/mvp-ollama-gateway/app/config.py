@@ -72,6 +72,9 @@ class Settings:
         # API 服务配置
         self.API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
         self.API_PORT: int = int(os.getenv("API_PORT", "8000"))
+        
+        # 下载链接主机地址配置（用于生成报表下载链接）
+        self.DOWNLOAD_HOST: str = os.getenv("DOWNLOAD_HOST", "172.29.75.228")
 
         # MCP 客户端连接的 SSE 端点
         # Agent 通过真实 MCP 协议 (SSE + JSON-RPC) 回调本进程挂载的 MCP Server

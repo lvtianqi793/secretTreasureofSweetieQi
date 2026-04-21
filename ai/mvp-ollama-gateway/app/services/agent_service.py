@@ -14,9 +14,10 @@ MCP Agent 服务 —— Ollama tool-calling + 真实 MCP 协议 闭环
   4. 流式返回中间过程（MCP 调用可观测）与最终答案
 """
 
+import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -38,6 +39,9 @@ MAX_AGENT_STEPS = settings.MAX_AGENT_STEPS
 PREVIEW_ARGS_LIMIT = settings.PREVIEW_ARGS_LIMIT
 PREVIEW_RESULT_LIMIT = settings.PREVIEW_RESULT_LIMIT
 OLLAMA_TIMEOUT = httpx.Timeout(settings.OLLAMA_TIMEOUT, connect=10.0)
+MAX_TOOL_RESULT_LENGTH = getattr(settings, "MAX_TOOL_RESULT_LENGTH", 8000)  # 工具结果最大保留字符
+MAX_CONTEXT_MESSAGES = 20  # 保留最近的消息轮数（不含 system）
+TOOL_CALL_TIMEOUT = 30.0  # 单个 MCP 工具调用超时（秒）
 
 AGENT_TOOL_INSTRUCTIONS = """你现在通过 MCP 协议接入了建筑能源管理系统的工具集。
 可用工具：
@@ -117,7 +121,7 @@ def _mcp_tools_to_ollama(mcp_tools) -> List[Dict[str, Any]]:
 
 
 def _mcp_result_to_text(call_result) -> str:
-    """MCP CallToolResult.content → 字符串（拼接 TextContent.text）"""
+    """MCP CallToolResult.content → 字符串（拼接 TextContent.text），并截断"""
     parts: List[str] = []
     for item in (getattr(call_result, "content", None) or []):
         text = getattr(item, "text", None)
@@ -125,7 +129,56 @@ def _mcp_result_to_text(call_result) -> str:
             parts.append(text)
         else:
             parts.append(str(item))
-    return "\n".join(parts) if parts else ""
+    full_text = "\n".join(parts) if parts else ""
+    return _truncate(full_text, MAX_TOOL_RESULT_LENGTH)
+
+
+def _format_tool_call_for_user(tool_name: str, args: Dict[str, Any]) -> str:
+    """将工具调用信息转换为用户友好的描述"""
+    tool_descriptions = {
+        "query_energy_data": "正在查询能耗数据",
+        "summary_statistics": "正在统计能耗数据",
+        "calculate_cop": "正在计算制冷机组能效",
+        "detect_anomaly": "正在检测能耗异常",
+        "generate_chart": "正在生成图表数据",
+        "get_data_time_range": "正在查询数据时间范围",
+        "export_report": "正在生成报表",
+        "export_chart": "正在导出图表"
+    }
+    
+    base_description = tool_descriptions.get(tool_name, f"正在执行{tool_name}操作")
+    
+    # 根据具体参数添加更多细节
+    if tool_name == "query_energy_data":
+        energy_type = args.get("energy_type", "")
+        if energy_type:
+            base_description += f"（{energy_type}类型）"
+    elif tool_name == "summary_statistics":
+        energy_type = args.get("energy_type", "")
+        granularity = args.get("granularity", "")
+        if energy_type and granularity:
+            base_description += f"（{energy_type}，{granularity}粒度）"
+    
+    return base_description
+
+
+def _format_tool_result_for_user(tool_name: str, result: str) -> str:
+    """将工具执行结果转换为用户友好的描述"""
+    if "[工具错误]" in result or "工具调用失败" in result:
+        return "操作遇到问题，正在重新处理..."
+    
+    tool_success_messages = {
+        "query_energy_data": "能耗数据查询完成",
+        "summary_statistics": "统计计算完成",
+        "calculate_cop": "能效计算完成",
+        "detect_anomaly": "异常检测完成",
+        "generate_chart": "图表数据生成完成",
+        "get_data_time_range": "时间范围查询完成",
+        "export_report": "报表生成完成",
+        "export_chart": "图表导出完成"
+    }
+    
+    return tool_success_messages.get(tool_name, "操作完成")
 
 
 def _build_system_prompt(base_chat_prompt: Optional[str]) -> str:
@@ -135,7 +188,7 @@ def _build_system_prompt(base_chat_prompt: Optional[str]) -> str:
     return AGENT_TOOL_INSTRUCTIONS
 
 
-# 过滤历史时需要剔除的 MCP 过程噪声前缀（这些只是展示给前端的进度，不能灌回模型上下文）
+# 过滤历史时需要剔除的 MCP 过程噪声前缀
 _MCP_NOISE_PREFIXES = (
     "[MCP已连接]",
     "[MCP tools/call]",
@@ -178,6 +231,101 @@ def _sanitize_history(history: Optional[List[Dict[str, Any]]]) -> List[Dict[str,
     return cleaned[-20:]
 
 
+def _normalize_tool_calls(tool_calls: Any) -> List[Dict[str, Any]]:
+    """
+    兼容 Ollama 可能返回的不同 tool_calls 格式：
+    - 标准格式: [{"function": {"name": "...", "arguments": {...}}}]
+    - 单对象: {"function": {...}}
+    - 直接是函数列表: [{"name": "...", "arguments": {...}}]
+    """
+    if not tool_calls:
+        return []
+    if isinstance(tool_calls, dict):
+        # 单对象格式
+        if "function" in tool_calls:
+            return [tool_calls]
+        # 可能是直接 {"name": "...", "arguments": {...}}
+        if "name" in tool_calls:
+            return [{"function": tool_calls}]
+        return []
+    if isinstance(tool_calls, list):
+        normalized = []
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                if "function" in tc:
+                    normalized.append(tc)
+                elif "name" in tc:
+                    normalized.append({"function": tc})
+                else:
+                    # 未知格式，跳过
+                    continue
+        return normalized
+    return []
+
+
+async def _ensure_time_range_for_tool(
+    session: ClientSession,
+    tool_name: str,
+    args: Dict[str, Any],
+    energy_type: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    为 detect_anomaly 和 calculate_cop 自动补充时间参数。
+    返回 (修改后的 args, 补充说明文本)，若无修改则返回原 args 和 None。
+    """
+    needs_time_filter = tool_name in ("detect_anomaly", "calculate_cop")
+    if not needs_time_filter:
+        return args, None
+    
+    # 已有 start_time 和 end_time 则直接使用
+    if args.get("start_time") and args.get("end_time"):
+        return args, None
+    
+    # 获取能源类型（优先从 args，否则使用传入的默认）
+    en_type = args.get("energy_type") or energy_type or "electricity"
+    
+    # 调用 get_data_time_range 获取数据实际最大时间
+    try:
+        time_range_result = await session.call_tool("get_data_time_range", {"energy_type": en_type})
+        result_text = _mcp_result_to_text(time_range_result)
+        # 解析 JSON，期望格式 {"minTime": "...", "maxTime": "..."}
+        try:
+            data = json.loads(result_text)
+            max_time = data.get("maxTime")
+            if not max_time:
+                return args, None
+        except json.JSONDecodeError:
+            # 如果返回的不是 JSON，尝试用正则提取
+            import re
+            match = re.search(r'"maxTime":\s*"([^"]+)"', result_text)
+            if match:
+                max_time = match.group(1)
+            else:
+                return args, None
+        
+        # 根据工具类型决定回溯区间
+        from datetime import datetime, timedelta
+        max_dt = datetime.strptime(max_time, "%Y-%m-%d %H:%M:%S")
+        
+        if tool_name == "detect_anomaly":
+            # 异常检测默认回溯 7 天
+            start_dt = max_dt - timedelta(days=7)
+            end_dt = max_dt
+        else:  # calculate_cop
+            # COP 计算默认回溯 90 天（约 3 个月）
+            start_dt = max_dt - timedelta(days=90)
+            end_dt = max_dt
+        
+        new_args = args.copy()
+        new_args["start_time"] = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        new_args["end_time"] = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+        hint = f"（自动补充时间范围：{new_args['start_time']} 至 {new_args['end_time']}）"
+        return new_args, hint
+    except Exception as e:
+        logger.warning(f"[Agent] 自动补充时间范围失败: {e}")
+        return args, None
+
+
 async def run_agent_stream(
     user_prompt: str,
     model: Optional[str] = None,
@@ -208,15 +356,18 @@ async def run_agent_stream(
         logger.info(f"[Agent] 注入历史消息 {len(prior)} 条")
     messages.append({"role": "user", "content": user_prompt})
 
+    # 滑动窗口：保留 system + 最近 MAX_CONTEXT_MESSAGES 条消息
+    def trim_messages():
+        nonlocal messages
+        if len(messages) > MAX_CONTEXT_MESSAGES + 1:  # +1 是 system
+            # 保留 system 和最近的 MAX_CONTEXT_MESSAGES 条
+            messages = [messages[0]] + messages[-(MAX_CONTEXT_MESSAGES):]
+            logger.info(f"[Agent] 上下文滑动窗口修剪，当前消息数 {len(messages)}")
+
     try:
-        # 1) 打开真实 MCP SSE 客户端会话 → 本进程 /mcp/sse
-        logger.info(f"[Agent] 连接 MCP Server: {settings.MCP_SSE_URL}")
         async with sse_client(settings.MCP_SSE_URL) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
-                # 2) 协议握手
                 await session.initialize()
-
-                # 3) tools/list 拉取工具 Schema
                 tools_result = await session.list_tools()
                 tools = _mcp_tools_to_ollama(tools_result.tools)
                 logger.info(f"[Agent] MCP 会话就绪，加载 {len(tools)} 个工具")
@@ -226,7 +377,6 @@ async def run_agent_stream(
                     "done": False,
                 })
 
-                # 4) 进入 Ollama ↔ MCP 工具调用循环
                 async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as ollama:
                     for step in range(MAX_AGENT_STEPS):
                         logger.info(f"[Agent] step={step + 1} messages={len(messages)}")
@@ -249,7 +399,8 @@ async def run_agent_stream(
 
                         msg = data.get("message") or {}
                         content = msg.get("content") or ""
-                        tool_calls = msg.get("tool_calls") or []
+                        raw_tool_calls = msg.get("tool_calls") or []
+                        tool_calls = _normalize_tool_calls(raw_tool_calls)
 
                         assistant_msg: Dict[str, Any] = {
                             "role": msg.get("role", "assistant"),
@@ -258,40 +409,65 @@ async def run_agent_stream(
                         if tool_calls:
                             assistant_msg["tool_calls"] = tool_calls
                         messages.append(assistant_msg)
+                        trim_messages()
 
-                        # 情况 A：无 tool_calls → 已给出最终答案
                         if not tool_calls:
                             if content:
                                 yield _sse({"response": content, "done": False})
                             yield _sse({"response": "", "done": True})
                             return
 
-                        # 情况 B：通过 MCP tools/call 真实执行工具
+                        # 执行每个工具调用
                         for tc in tool_calls:
                             fn = tc.get("function") or {}
                             name = fn.get("name") or ""
                             args = _normalize_args(fn.get("arguments"))
 
-                            args_preview = _truncate(
-                                json.dumps(args, ensure_ascii=False),
-                                PREVIEW_ARGS_LIMIT,
+                            # 自动补充时间参数（针对 detect_anomaly / calculate_cop）
+                            energy_type_for_time = None
+                            # 尝试从历史或上下文中获取能源类型（简单策略：从 args 或消息内容中找）
+                            if "energy_type" in args:
+                                energy_type_for_time = args["energy_type"]
+                            else:
+                                # 简单从最近的 user 或 assistant 消息中找
+                                for m in reversed(messages):
+                                    if m["role"] in ("user", "assistant"):
+                                        text = m.get("content", "")
+                                        import re
+                                        match = re.search(r"(electricity|water|gas|steam|chilledwater|hotwater|solar|irrigation)", text, re.I)
+                                        if match:
+                                            energy_type_for_time = match.group(1).lower()
+                                            break
+                            new_args, time_hint = await _ensure_time_range_for_tool(
+                                session, name, args, energy_type_for_time
                             )
+                            if time_hint:
+                                yield _sse({"response": f"\n{time_hint}\n", "done": False})
+                            args = new_args
+
                             yield _sse({
-                                "response": f"\n[MCP tools/call] {name}({args_preview})\n",
+                                "response": f"\n{_format_tool_call_for_user(name, args)}\n",
                                 "done": False,
                             })
 
                             try:
-                                call_result = await session.call_tool(name, args)
+                                # 带超时的工具调用
+                                call_result = await asyncio.wait_for(
+                                    session.call_tool(name, args),
+                                    timeout=TOOL_CALL_TIMEOUT
+                                )
                                 tool_result = _mcp_result_to_text(call_result)
                                 if getattr(call_result, "isError", False):
                                     tool_result = f"[工具错误] {tool_result}"
+                            except asyncio.TimeoutError:
+                                logger.warning(f"[Agent] MCP 工具 {name} 超时")
+                                tool_result = f"[工具错误] 工具 {name} 执行超时（>{TOOL_CALL_TIMEOUT}秒），请尝试缩小时间范围或改用更粗粒度。"
                             except Exception as e:
                                 logger.exception(f"[Agent] MCP 调用失败 {name}")
-                                tool_result = f"工具调用失败: {e}"
+                                tool_result = f"[工具错误] 工具调用失败: {e}"
 
                             yield _sse({
-                                "response": f"[工具结果] {_truncate(tool_result, PREVIEW_RESULT_LIMIT)}\n\n",
+                                "response": f"{_format_tool_result_for_user(name, tool_result)}\n\n",
                                 "done": False,
                             })
 
@@ -299,8 +475,8 @@ async def run_agent_stream(
                                 "role": "tool",
                                 "content": tool_result,
                             })
+                            trim_messages()
 
-                    # 超出最大轮次仍未收敛
                     yield _sse({
                         "response": "\n[已达最大 MCP 工具调用轮次]",
                         "done": True,
