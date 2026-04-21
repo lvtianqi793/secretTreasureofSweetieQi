@@ -166,7 +166,7 @@ public class EnergyQueryService {
 
         String orderBy = "value".equals(request.getSortBy()) ? valueCol : "monitor_time";
         String sortOrder = "asc".equalsIgnoreCase(request.getSortOrder()) ? "ASC" : "DESC";
-        int limit = Math.min(Math.max(maxRows, 1), 100_000);
+        int limit = Math.max(maxRows, 1);
 
         String sql = "SELECT id, building_id, building_type, monitor_time, " + valueCol +
                 " FROM " + tableName + where +

@@ -975,6 +975,20 @@ body {
   white-space: nowrap;
 }
 
+.stats-field-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.45rem;
+  padding: 0.35rem 0.6rem;
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  white-space: normal;
+}
+
 .stats-btn {
   align-self: end;
   display: inline-flex;

@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -131,22 +130,32 @@ public class StatisticsService {
      */
     private StatisticsResult copAnalysis(StatisticsRequest request) {
         String granularity = GRANULARITY_MAP.getOrDefault(request.getGranularity(), "day");
+        String where = buildCopWhereClause(request);
 
+        // 先按粒度桶各自聚合, 再按 (building_id, 桶) 对齐, 避免精确时间戳 JOIN 空集
         String copSql = String.format(
-                "SELECT DATE_TRUNC('%s', c.monitor_time) as period, " +
-                "c.building_id, " +
-                "SUM(c.chilledwater_tonhours) as cooling_output, " +
-                "SUM(e.electricity_kwh) as electric_input, " +
-                "CASE WHEN SUM(e.electricity_kwh) > 0 " +
-                "  THEN (SUM(c.chilledwater_tonhours) * 3.517) / SUM(e.electricity_kwh) " +
-                "  ELSE 0 END as cop " +
-                "FROM chilledwater_data c " +
-                "JOIN electricity_data e ON c.building_id = e.building_id " +
-                "  AND c.monitor_time = e.monitor_time " +
-                "WHERE 1=1 %s " +
-                "GROUP BY period, c.building_id " +
-                "ORDER BY period, c.building_id",
-                granularity, buildCopWhereClause(request)
+                "WITH cool AS (" +
+                "  SELECT building_id, " +
+                "         DATE_TRUNC('%s', monitor_time) AS period, " +
+                "         SUM(chilledwater_tonhours) AS cooling_th " +
+                "  FROM chilledwater_data WHERE 1=1 %s " +
+                "  GROUP BY building_id, period" +
+                "), elec AS (" +
+                "  SELECT building_id, " +
+                "         DATE_TRUNC('%s', monitor_time) AS period, " +
+                "         SUM(electricity_kwh) AS elec_kwh " +
+                "  FROM electricity_data WHERE 1=1 %s " +
+                "  GROUP BY building_id, period" +
+                ") " +
+                "SELECT cool.period, cool.building_id, " +
+                "       cool.cooling_th AS cooling_output, " +
+                "       elec.elec_kwh   AS electric_input, " +
+                "       CASE WHEN elec.elec_kwh > 0 " +
+                "            THEN (cool.cooling_th * 3.517) / elec.elec_kwh " +
+                "            ELSE 0 END AS cop " +
+                "FROM cool JOIN elec USING (building_id, period) " +
+                "ORDER BY cool.period, cool.building_id",
+                granularity, where, granularity, where
         );
 
         Query query = entityManager.createNativeQuery(copSql);
@@ -186,8 +195,18 @@ public class StatisticsService {
     }
 
     /**
-     * 数据异常分析 (Z-score方法)
-     * |Z-score| > 2 视为异常, > 3 视为严重异常
+     * 数据异常分析 - 每建筑 IQR (Tukey 箱线图法) + 数据质量规则
+     *
+     * 统计异常 (IQR 法, 每建筑独立基线):
+     *   基线 = 该建筑中位数 Q2, 波动幅度 = Q3 - Q1
+     *   偏离度 = 距离 Q1/Q3 的 IQR 倍数
+     *   1.5x < 偏离 <= 3x  → 偏高/偏低
+     *   偏离 > 3x          → 严重偏高/严重偏低
+     *   (每建筑至少 100 条数据才参与, 否则 IQR 不可靠)
+     *
+     * 数据质量 (规则法):
+     *   值 < 0     → 负值 (能耗不可能为负)
+     *   值 IS NULL → 缺失值
      */
     private StatisticsResult anomalyAnalysis(StatisticsRequest request) {
         String[] tableInfo = getTableInfo(request.getEnergyType());
@@ -195,74 +214,116 @@ public class StatisticsService {
         String valueCol = tableInfo[1];
         String unit = tableInfo[2];
 
-        // 计算均值和标准差
-        String statsSql = String.format(
-                "SELECT AVG(%s), STDDEV(%s), COUNT(*) FROM %s WHERE 1=1 %s",
-                valueCol, valueCol, tableName, buildWhereClause(request)
+        String where = buildWhereClause(request);
+
+        // 总记录数 (用于汇总)
+        String countSql = "SELECT COUNT(*) FROM " + tableName + " WHERE 1=1 " + where;
+        Query countQuery = entityManager.createNativeQuery(countSql);
+        setQueryParams(countQuery, request);
+        long totalCount = toLong(countQuery.getSingleResult());
+
+        List<AnomalyRecord> anomalies = new ArrayList<>();
+
+        // ========== 1. 统计异常 (每建筑 IQR) ==========
+        String iqrSql = String.format(
+                "WITH filtered AS ( " +
+                "  SELECT id, building_id, monitor_time, %s AS val " +
+                "  FROM %s WHERE 1=1 %s AND %s IS NOT NULL " +
+                "), stats AS ( " +
+                "  SELECT building_id, " +
+                "         percentile_cont(0.25) WITHIN GROUP (ORDER BY val) AS q1, " +
+                "         percentile_cont(0.50) WITHIN GROUP (ORDER BY val) AS q2, " +
+                "         percentile_cont(0.75) WITHIN GROUP (ORDER BY val) AS q3, " +
+                "         COUNT(*) AS cnt " +
+                "  FROM filtered " +
+                "  GROUP BY building_id " +
+                "  HAVING COUNT(*) >= 100 " +
+                ") " +
+                "SELECT f.id, f.building_id, f.monitor_time, f.val, " +
+                "       s.q2 AS baseline, " +
+                "       (s.q3 - s.q1) AS iqr, " +
+                "       CASE WHEN f.val > s.q3 THEN (f.val - s.q3) / (s.q3 - s.q1) " +
+                "            ELSE (s.q1 - f.val) / (s.q3 - s.q1) END AS score, " +
+                "       CASE WHEN f.val > s.q3 THEN 'high' ELSE 'low' END AS direction " +
+                "FROM filtered f " +
+                "JOIN stats s ON f.building_id = s.building_id " +
+                "WHERE (s.q3 - s.q1) > 0 " +
+                "  AND ( f.val > s.q3 + 1.5 * (s.q3 - s.q1) " +
+                "     OR f.val < s.q1 - 1.5 * (s.q3 - s.q1) ) " +
+                "ORDER BY score DESC " +
+                "LIMIT 500",
+                valueCol, tableName, where, valueCol
         );
-        Query statsQuery = entityManager.createNativeQuery(statsSql);
-        setQueryParams(statsQuery, request);
-        Object[] statsRow = (Object[]) statsQuery.getSingleResult();
-
-        double mean = toDouble(statsRow[0]);
-        double stdDev = toDouble(statsRow[1]);
-        long totalCount = toLong(statsRow[2]);
-
-        if (stdDev == 0) {
-            return StatisticsResult.builder()
-                    .analysisType("anomaly")
-                    .summary(SummaryInfo.builder()
-                            .avgValue(mean).stdDev(0).recordCount(totalCount).unit(unit).build())
-                    .anomalies(Collections.emptyList())
-                    .build();
-        }
-
-        // 查找Z-score > 2的异常数据
-        String anomalySql = String.format(
-                "SELECT id, building_id, monitor_time, %s, " +
-                "(%s - %f) / %f as z_score " +
-                "FROM %s WHERE 1=1 %s " +
-                "AND ABS((%s - %f) / %f) > 2 " +
-                "ORDER BY ABS((%s - %f) / %f) DESC LIMIT 500",
-                valueCol,
-                valueCol, mean, stdDev,
-                tableName, buildWhereClause(request),
-                valueCol, mean, stdDev,
-                valueCol, mean, stdDev
-        );
-
-        Query anomalyQuery = entityManager.createNativeQuery(anomalySql);
-        setQueryParams(anomalyQuery, request);
+        Query iqrQuery = entityManager.createNativeQuery(iqrSql);
+        setQueryParams(iqrQuery, request);
 
         @SuppressWarnings("unchecked")
-        List<Object[]> rows = anomalyQuery.getResultList();
-        List<AnomalyRecord> anomalies = rows.stream()
-                .map(row -> {
-                    double value = toDouble(row[3]);
-                    double zScore = toDouble(row[4]);
-                    String anomalyType;
-                    if (zScore > 3) anomalyType = "严重偏高";
-                    else if (zScore > 2) anomalyType = "偏高";
-                    else if (zScore < -3) anomalyType = "严重偏低";
-                    else anomalyType = "偏低";
+        List<Object[]> iqrRows = iqrQuery.getResultList();
+        for (Object[] row : iqrRows) {
+            double value = toDouble(row[3]);
+            double baseline = toDouble(row[4]);
+            double iqr = toDouble(row[5]);
+            double score = toDouble(row[6]);
+            String direction = row[7] != null ? row[7].toString() : "high";
+            String type;
+            if ("high".equals(direction)) {
+                type = score > 3 ? "严重偏高" : "偏高";
+            } else {
+                type = score > 3 ? "严重偏低" : "偏低";
+            }
+            anomalies.add(AnomalyRecord.builder()
+                    .dataId(toLong(row[0]))
+                    .buildingId(row[1].toString())
+                    .monitorTime(row[2].toString())
+                    .value(value)
+                    .mean(baseline)
+                    .stdDev(iqr)
+                    .zScore(score)
+                    .category("统计异常")
+                    .anomalyType(type)
+                    .build());
+        }
 
-                    return AnomalyRecord.builder()
-                            .dataId(toLong(row[0]))
-                            .buildingId(row[1].toString())
-                            .monitorTime(row[2].toString())
-                            .value(value)
-                            .mean(mean)
-                            .stdDev(stdDev)
-                            .zScore(zScore)
-                            .anomalyType(anomalyType)
-                            .build();
-                })
-                .collect(Collectors.toList());
+        // ========== 2. 数据质量 (负值 / 缺失) ==========
+        String qualitySql = String.format(
+                "SELECT id, building_id, monitor_time, %s AS val, " +
+                "       CASE WHEN %s IS NULL THEN '缺失值' ELSE '负值' END AS qtype " +
+                "FROM %s WHERE 1=1 %s " +
+                "  AND (%s IS NULL OR %s < 0) " +
+                "ORDER BY monitor_time DESC " +
+                "LIMIT 200",
+                valueCol, valueCol, tableName, where, valueCol, valueCol
+        );
+        Query qualityQuery = entityManager.createNativeQuery(qualitySql);
+        setQueryParams(qualityQuery, request);
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> qualityRows = qualityQuery.getResultList();
+        for (Object[] row : qualityRows) {
+            double value = row[3] == null ? 0.0 : toDouble(row[3]);
+            String qtype = row[4] != null ? row[4].toString() : "负值";
+            anomalies.add(AnomalyRecord.builder()
+                    .dataId(toLong(row[0]))
+                    .buildingId(row[1].toString())
+                    .monitorTime(row[2] != null ? row[2].toString() : "")
+                    .value(value)
+                    .mean(0)
+                    .stdDev(0)
+                    .zScore(0)
+                    .category("数据质量")
+                    .anomalyType(qtype)
+                    .build());
+        }
+
+        // 汇总
+        long stats异常 = anomalies.stream().filter(a -> "统计异常".equals(a.getCategory())).count();
+        long quality异常 = anomalies.stream().filter(a -> "数据质量".equals(a.getCategory())).count();
+        log.info("异常检测完成: 统计异常={}, 数据质量={}, 总记录={}", stats异常, quality异常, totalCount);
 
         SummaryInfo summary = SummaryInfo.builder()
                 .totalValue(anomalies.size())
-                .avgValue(mean)
-                .stdDev(stdDev)
+                .avgValue(stats异常)
+                .stdDev(quality异常)
                 .recordCount(totalCount)
                 .unit(unit)
                 .build();
@@ -305,13 +366,13 @@ public class StatisticsService {
     private String buildCopWhereClause(StatisticsRequest req) {
         StringBuilder sb = new StringBuilder();
         if (req.getBuildingId() != null && !req.getBuildingId().isBlank()) {
-            sb.append(" AND c.building_id = :buildingId");
+            sb.append(" AND building_id = :buildingId");
         }
         if (req.getStartTime() != null) {
-            sb.append(" AND c.monitor_time >= :startTime");
+            sb.append(" AND monitor_time >= :startTime");
         }
         if (req.getEndTime() != null) {
-            sb.append(" AND c.monitor_time <= :endTime");
+            sb.append(" AND monitor_time <= :endTime");
         }
         return sb.toString();
     }

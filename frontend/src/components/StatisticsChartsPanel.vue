@@ -51,9 +51,9 @@ const GRANULARITY_OPTIONS = [
 ] as const
 
 const ANALYSIS_OPTIONS = [
-  { value: 'summary', label: 'summary' },
-  { value: 'cop', label: 'cop' },
-  { value: 'anomaly', label: 'anomaly' },
+  { value: 'summary', label: '时段汇总' },
+  { value: 'cop', label: 'COP 计算' },
+  { value: 'anomaly', label: '异常检测' },
 ] as const
 
 // —— 快捷：趋势
@@ -547,7 +547,7 @@ async function doExportRaw() {
               </option>
             </select>
           </label>
-          <label class="stats-field">
+          <label v-if="expReport.analysisType !== 'cop'" class="stats-field">
             <span>能源类型</span>
             <select v-model="expReport.energyType" class="csv-input">
               <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
@@ -555,6 +555,10 @@ async function doExportRaw() {
               </option>
             </select>
           </label>
+          <div v-else class="stats-field stats-field--hint">
+            <span>能源类型</span>
+            <span class="stats-field-hint">冷冻水+电力</span>
+          </div>
           <label class="stats-field">
             <span>粒度</span>
             <select v-model="expReport.granularity" class="csv-input">

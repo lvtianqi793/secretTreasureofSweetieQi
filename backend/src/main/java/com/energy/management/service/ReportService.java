@@ -97,14 +97,42 @@ public class ReportService {
                     createCell(hdr, i, labels[i], headerStyle);
                 }
 
-                String[][] data = {
-                        {"总计", String.format("%.2f %s", s.getTotalValue(), s.getUnit())},
-                        {"均值", String.format("%.4f %s", s.getAvgValue(), s.getUnit())},
-                        {"最大值", String.format("%.2f %s", s.getMaxValue(), s.getUnit())},
-                        {"最小值", String.format("%.2f %s", s.getMinValue(), s.getUnit())},
-                        {"标准差", String.format("%.4f", s.getStdDev())},
-                        {"记录数", String.valueOf(s.getRecordCount())}
-                };
+                String[][] data;
+                String analysisType = request.getAnalysisType();
+                if ("anomaly".equals(analysisType)) {
+                    // 异常分析: avgValue=统计异常数, stdDev=数据质量异常数, totalValue=总异常数
+                    long totalRecords = s.getRecordCount();
+                    long totalAnom = (long) s.getTotalValue();
+                    long statsAnom = (long) s.getAvgValue();
+                    long qualityAnom = (long) s.getStdDev();
+                    double ratio = totalRecords > 0 ? (totalAnom * 100.0 / totalRecords) : 0;
+                    data = new String[][]{
+                            {"总异常数", String.valueOf(totalAnom)},
+                            {"统计异常 (IQR法)", String.valueOf(statsAnom)},
+                            {"数据质量异常 (负值/缺失)", String.valueOf(qualityAnom)},
+                            {"总记录数", String.valueOf(totalRecords)},
+                            {"异常占比", String.format("%.4f%%", ratio)}
+                    };
+                } else if ("cop".equals(analysisType)) {
+                    // COP分析: totalValue=总体COP, avg/max/min都是COP值
+                    data = new String[][]{
+                            {"总体 COP", String.format("%.4f", s.getTotalValue())},
+                            {"平均 COP", String.format("%.4f", s.getAvgValue())},
+                            {"最大 COP", String.format("%.4f", s.getMaxValue())},
+                            {"最小 COP", String.format("%.4f", s.getMinValue())},
+                            {"记录数", String.valueOf(s.getRecordCount())}
+                    };
+                } else {
+                    // 时段汇总 (summary): 能耗统计量
+                    data = new String[][]{
+                            {"总计", String.format("%.2f %s", s.getTotalValue(), s.getUnit())},
+                            {"均值", String.format("%.4f %s", s.getAvgValue(), s.getUnit())},
+                            {"最大值", String.format("%.2f %s", s.getMaxValue(), s.getUnit())},
+                            {"最小值", String.format("%.2f %s", s.getMinValue(), s.getUnit())},
+                            {"标准差", String.format("%.4f", s.getStdDev())},
+                            {"记录数", String.valueOf(s.getRecordCount())}
+                    };
+                }
                 for (String[] d : data) {
                     Row r = summarySheet.createRow(rowNum++);
                     createCell(r, 0, d[0], dataStyle);
@@ -179,23 +207,25 @@ public class ReportService {
                 int anomRow = 0;
 
                 Row anomHeader = anomSheet.createRow(anomRow++);
-                String[] anomHeaders = {"建筑编号", "监测时间", "实际值", "均值", "标准差", "Z-Score", "异常类型"};
+                String[] anomHeaders = {"异常类别", "异常类型", "建筑编号", "监测时间", "实际值", "基线(中位数)", "IQR", "偏离度(IQR倍数)"};
                 for (int i = 0; i < anomHeaders.length; i++) {
                     createCell(anomHeader, i, anomHeaders[i], headerStyle);
                 }
 
                 for (StatisticsResult.AnomalyRecord anom : result.getAnomalies()) {
                     Row r = anomSheet.createRow(anomRow++);
-                    createCell(r, 0, anom.getBuildingId(), dataStyle);
-                    createCell(r, 1, anom.getMonitorTime(), dataStyle);
-                    createCell(r, 2, String.format("%.2f", anom.getValue()), dataStyle);
-                    createCell(r, 3, String.format("%.4f", anom.getMean()), dataStyle);
-                    createCell(r, 4, String.format("%.4f", anom.getStdDev()), dataStyle);
-                    createCell(r, 5, String.format("%.2f", anom.getZScore()), dataStyle);
-                    createCell(r, 6, anom.getAnomalyType(), dataStyle);
+                    createCell(r, 0, anom.getCategory() != null ? anom.getCategory() : "统计异常", dataStyle);
+                    createCell(r, 1, anom.getAnomalyType(), dataStyle);
+                    createCell(r, 2, anom.getBuildingId(), dataStyle);
+                    createCell(r, 3, anom.getMonitorTime(), dataStyle);
+                    createCell(r, 4, String.format("%.2f", anom.getValue()), dataStyle);
+                    boolean isQuality = "数据质量".equals(anom.getCategory());
+                    createCell(r, 5, isQuality ? "-" : String.format("%.4f", anom.getMean()), dataStyle);
+                    createCell(r, 6, isQuality ? "-" : String.format("%.4f", anom.getStdDev()), dataStyle);
+                    createCell(r, 7, isQuality ? "-" : String.format("%.2f", anom.getZScore()), dataStyle);
                 }
 
-                for (int i = 0; i < 7; i++) anomSheet.autoSizeColumn(i);
+                for (int i = 0; i < 8; i++) anomSheet.autoSizeColumn(i);
             }
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
