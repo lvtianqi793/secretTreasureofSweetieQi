@@ -19,7 +19,7 @@ from app.config import settings
 from app.models.request import ChatRequest, ErrorResponse, HealthResponse
 from app.services.prompt_loader import get_prompt_loader
 from app.services.ollama_client import get_ollama_client
-from app.services.ragflow_client import get_ragflow_client, RagflowNoDocumentsException
+from app.services.ragflow_client import get_ragflow_client, RagflowNoDocumentsException, RagflowTimeoutException
 from app.mcp_server import mcp as mcp_server
 
 # 使用配置的路径
@@ -285,9 +285,15 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
             if chunk_count == 0:
                 yield f"data: {json.dumps({'error': 'No response from RAGFlow', 'done': True})}\n\n"
                 
-        except RagflowNoDocumentsException as e:
-            # 关键修改：未检索到文档，降级到 Ollama
-            logger.warning(f"[{prompt_type}] RAGFlow 未检索到文档，降级到 Ollama: {e}")
+        except (RagflowNoDocumentsException, RagflowTimeoutException) as e:
+            # 关键修改：未检索到文档或超时，降级到 Ollama
+            if isinstance(e, RagflowNoDocumentsException):
+                logger.warning(f"[{prompt_type}] RAGFlow 未检索到文档，降级到 Ollama: {e}")
+                error_reason = "未检索到文档"
+            else:
+                logger.warning(f"[{prompt_type}] RAGFlow 响应超时，降级到 Ollama: {e}")
+                error_reason = "响应超时"
+            
             # 获取 analyse 系统 prompt
             loader = get_prompt_loader("analyse")
             system_prompt = loader.get_prompt()
@@ -295,8 +301,8 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
             if not system_prompt:
                 logger.error(f"[{prompt_type}] analyse 系统 prompt 加载失败，无法降级")
                 error_data = {
-                    "error": "RAGFlow 未检索到文档，且 analyse 系统 prompt 未配置",
-                    "error_type": "RagflowNoDocumentsAndNoFallback",
+                    "error": f"RAGFlow {error_reason}，且 analyse 系统 prompt 未配置",
+                    "error_type": "RagflowFallbackFailed",
                     "done": True
                 }
                 yield f"data: {json.dumps(error_data)}\n\n"
@@ -307,8 +313,8 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
             if not await ollama_client.check_connection():
                 logger.error("Ollama 服务不可用，无法降级")
                 error_data = {
-                    "error": "RAGFlow 未检索到文档，且 Ollama 服务不可用",
-                    "error_type": "RagflowNoDocumentsAndOllamaUnavailable",
+                    "error": f"RAGFlow {error_reason}，且 Ollama 服务不可用",
+                    "error_type": "RagflowFallbackFailed",
                     "done": True
                 }
                 yield f"data: {json.dumps(error_data)}\n\n"
