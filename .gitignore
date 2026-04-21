@@ -25,6 +25,7 @@ local_settings.py
 !.env.example.backend
 !.env.example.db
 !.env.example.aiapi
+!.env.example
 .coverage
 htmlcov/
 
