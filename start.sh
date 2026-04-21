@@ -136,7 +136,7 @@ start_ragflow() {
     
     local attempt=1
     while [ $attempt -le 30 ]; do
-        if curl -s -f http://localhost:9380/api/v1/system/healthz > /dev/null 2>&1; then
+        if curl -s http://localhost:9380/api/v1/health > /dev/null 2>&1; then
             log_success "Ragflow 启动成功"
             return 0
         fi
@@ -169,7 +169,7 @@ start_project() {
     # 等待后端
     attempt=1
     while [ $attempt -le 30 ]; do
-        if curl -s -f http://localhost:8080/system/health > /dev/null 2>&1; then
+        if curl -s -f http://localhost:8080/api/system/health > /dev/null 2>&1; then
             log_success "后端服务就绪"
             break
         fi
