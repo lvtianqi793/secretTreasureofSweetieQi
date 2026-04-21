@@ -109,13 +109,13 @@ services:
           cpus: "0.25"
     volumes:
       - ./logs/ai-gateway:/var/log/ai-gateway # 挂载日志目录
-      - exports-data:/app/exports # 挂载导出目录，用于前端下载
+      # 注意: /app/exports 不挂 named volume, 直接用容器内部目录 (Dockerfile 里 chown 给 appuser)
+      # 命名卷会覆盖镜像层的权限, 导致 export_chart/export_report 无法写入
 
 # 数据卷定义
 volumes:
   postgres-data: # 持久化PostgreSQL数据
   import-status: # 临时存储导入状态标记
-  exports-data: # 导出目录数据卷，用于挂载到容器内
 
 # 使用外部docker_ragflow网络
 networks:

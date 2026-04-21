@@ -260,8 +260,8 @@ async def get_data_time_range(energy_type: str) -> Dict[str, Any]:
 # ----------------------------------------------------------------------------
 @mcp.tool()
 async def export_report(
-    analysis_type: str,
     energy_type: Optional[str] = None,
+    analysis_type: str = "summary",
     building_id: Optional[str] = None,
     building_type: Optional[str] = None,
     start_time: Optional[str] = None,
@@ -273,11 +273,11 @@ async def export_report(
       - 汇总信息 Sheet：总量/均值/峰谷/标准差/记录数
       - 时间序列 Sheet：按粒度聚合 + 内嵌折线图
       - COP 分析 Sheet（analysis_type=cop 时）：含内嵌柱状图
-      - 异常分析 Sheet（analysis_type=anomaly 时）：Z-Score 异常点列表
+      - 异常分析 Sheet（analysis_type=anomaly 时）：IQR 异常点列表
     文件落盘到服务端 exports/ 目录，用户通过返回的 downloadUrl 下载。
 
     Args:
-        analysis_type: 分析类型，summary / cop / anomaly
+        analysis_type: 分析类型，summary / cop / anomaly，默认 summary
         energy_type: 能源类型（cop 可省略，其他必填）
         building_id: 建筑编号
         building_type: 建筑类型
