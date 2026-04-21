@@ -8,13 +8,9 @@ import {
 } from 'vue'
 import ChartPreviewCard from './ChartPreviewCard.vue'
 import {
-  type BuildingInfo,
   type ChartPayload,
   type ChartRequest,
   type EnergyQueryExportBody,
-  type EnergyTypeOption,
-  getBuildings,
-  getEnergyOptions,
   type StatisticsExportBody,
   downloadBlob,
   getChartPie,
@@ -24,6 +20,14 @@ import {
   postEnergyQueryExport,
   postStatisticsExport,
 } from '../api/statistics'
+import {
+  buildingOptions,
+  buildingTypeOptions,
+  consumeDefaultTrend,
+  defaultTrendKey,
+  energyTypeOptions,
+  prewarmStats,
+} from '../composables/useStatsPrewarm'
 
 type ChartTab = 'trend' | 'ranking' | 'pie'
 type ExportTab = 'report' | 'chart' | 'raw'
@@ -36,10 +40,6 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const currentChart = ref<{ id: string; payload: ChartPayload; createdAt: number } | null>(null)
 const exporting = ref<null | 'report' | 'chart' | 'raw'>(null)
-
-const energyTypeOptions = ref<EnergyTypeOption[]>([])
-const buildingTypeOptions = ref<string[]>([])
-const buildingOptions = ref<BuildingInfo[]>([])
 
 /** 与后端 ChartService 支持的粒度一致 */
 const GRANULARITY_OPTIONS = [
@@ -186,7 +186,25 @@ function renderChart(data: ChartPayload) {
   }
 }
 
-async function loadTrend() {
+async function loadTrend(options: { allowCache?: boolean } = {}) {
+  const startBackend = (trendStart.value && toBackendDateTime(trendStart.value, 'start')) || ''
+  const endBackend = (trendEnd.value && toBackendDateTime(trendEnd.value, 'end')) || ''
+
+  if (options.allowCache) {
+    const cached = consumeDefaultTrend({
+      energyType: trendEnergy.value,
+      granularity: trendGranularity.value,
+      startTime: startBackend,
+      endTime: endBackend,
+      buildingId: trendBuilding.value || '',
+    })
+    if (cached) {
+      currentChart.value = cached
+      error.value = null
+      return
+    }
+  }
+
   loading.value = true
   error.value = null
   currentChart.value = null
@@ -194,8 +212,8 @@ async function loadTrend() {
     const data = await getChartTrend({
       energyType: trendEnergy.value,
       granularity: trendGranularity.value,
-      startTime: (trendStart.value && toBackendDateTime(trendStart.value, 'start')) || undefined,
-      endTime: (trendEnd.value && toBackendDateTime(trendEnd.value, 'end')) || undefined,
+      startTime: startBackend || undefined,
+      endTime: endBackend || undefined,
       buildingId: trendBuilding.value || undefined,
     })
     renderChart(data)
@@ -245,23 +263,10 @@ async function loadPie() {
 }
 
 onMounted(() => {
-  void (async () => {
-    try {
-      const opt = await getEnergyOptions()
-      energyTypeOptions.value = opt.energyTypes ?? []
-      buildingTypeOptions.value = opt.buildingTypes ?? []
-    } catch {
-      // ignore options load errors; fall back to manual input
-    }
-  })()
-  void (async () => {
-    try {
-      buildingOptions.value = (await getBuildings()) ?? []
-    } catch {
-      // ignore; building dropdowns will just be empty
-    }
-  })()
-  void loadTrend()
+  // 预取入口：若用户先进入 AI 问答再切到此面板，下方调用实际上已是 no-op（幂等）。
+  // 若用户首屏直接到达此面板，这里兜底触发一次。
+  prewarmStats()
+  void loadTrend({ allowCache: true })
 })
 
 onUnmounted(() => {
@@ -432,7 +437,7 @@ async function doExportRaw() {
               </option>
             </select>
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="loadTrend">查询</button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="loadTrend()">查询</button>
         </div>
 
         <div v-if="chartTab === 'ranking'" class="stats-form">

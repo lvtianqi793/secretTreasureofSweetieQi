@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import CsvImportPanel from './CsvImportPanel.vue'
+import { prewarmStats } from '../composables/useStatsPrewarm'
+
+onMounted(() => {
+  prewarmStats()
+})
 
 type Role = 'user' | 'assistant'
 
@@ -159,11 +164,7 @@ async function send() {
   }
 }
 
-const modeSubtitle = computed(() =>
-  mode.value === 'kb'
-    ? '当前：知识库（api/ai/ops）；Shift+Enter 换行'
-    : '当前：数据库（api/ai/chat）；Shift+Enter 换行',
-)
+const modeSubtitle = computed(() => 'Shift+Enter 换行')
 
 const inputPlaceholder = computed(() =>
   mode.value === 'kb' ? '向知识库提问…' : '向数据库问答提问…',
