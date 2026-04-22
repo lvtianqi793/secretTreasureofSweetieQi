@@ -281,9 +281,10 @@ async def _generate_with_ragflow(request: ChatRequest, prompt_type: str):
             
             logger.info(f"[{prompt_type}] RAGFlow 流式响应完成，共 {chunk_count} 个 chunk")
             
-            # 如果没有收到任何数据，发送错误信息
+            # 如果没有收到任何数据，降级到 Ollama
             if chunk_count == 0:
-                yield f"data: {json.dumps({'error': 'No response from RAGFlow', 'done': True})}\n\n"
+                logger.warning(f"[{prompt_type}] RAGFlow 返回空响应，降级到 Ollama")
+                raise RagflowNoDocumentsException("RAGFlow 返回空响应")
                 
         except (RagflowNoDocumentsException, RagflowTimeoutException) as e:
             # 关键修改：未检索到文档或超时，降级到 Ollama
