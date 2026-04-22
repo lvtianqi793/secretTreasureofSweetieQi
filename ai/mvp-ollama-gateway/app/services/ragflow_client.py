@@ -128,11 +128,11 @@ class RagflowClient:
         """
         判断是否未检索到相关文档
         
-        检测逻辑：精确匹配特定文本
+        检测逻辑：检测 answer 中是否包含特定文本
         """
-        # 精确匹配特定文本，忽略前后空白字符
+        # 检测 answer 中是否包含特定文本
         target_text = "The answer you are looking for is not found in the knowledge base!"
-        return answer.strip() == target_text
+        return target_text in answer
     
     async def generate_stream(
         self,
