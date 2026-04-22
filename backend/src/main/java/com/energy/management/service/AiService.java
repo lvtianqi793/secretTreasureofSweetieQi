@@ -45,10 +45,23 @@ public class AiService {
     }
 
     /**
-     * 数据分析 → /generate/analyse
+     * 数据分析 / 知识库问答 → /generate/analyse
+     * 启用 RAGFlow 时会走 RAGFlow 检索增强；未启用或无相关文档时 FastAPI 侧自动降级到 Ollama。
      */
     public String analyse(String prompt) {
-        return callAi("/generate/analyse", prompt, null);
+        return analyse(prompt, null);
+    }
+
+    public String analyse(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/analyse", prompt, history);
+    }
+
+    /**
+     * MCP Agent 智能问答 → /generate/agent
+     * 由 FastAPI 侧的 Ollama tool-calling + MCP 协议自主决定是否调用工具查真实数据。
+     */
+    public String chatAgent(String prompt, List<ChatMessage> history) {
+        return callAi("/generate/agent", prompt, history);
     }
 
     /**

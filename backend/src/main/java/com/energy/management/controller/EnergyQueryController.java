@@ -37,7 +37,7 @@ public class EnergyQueryController {
     private final ReportService reportService;
 
     /** 导出最大行数上限 (保护后端内存) */
-    private static final int EXPORT_MAX_ROWS = 100_000;
+    private static final int EXPORT_MAX_ROWS = 1_000_000;
 
     /**
      * 多条件分页查询
@@ -57,7 +57,7 @@ public class EnergyQueryController {
      * format=xlsx 返回 Excel, format=csv 返回 UTF-8 BOM 的 CSV
      */
     @Operation(summary = "导出查询数据",
-            description = "按当前筛选条件导出原始记录, format=xlsx|csv, 最多 10万 行")
+            description = "按当前筛选条件导出原始记录, format=xlsx|csv, 最多 100万 行")
     @PostMapping("/query/export")
     public ResponseEntity<byte[]> exportQuery(
             @RequestBody EnergyQueryRequest request,

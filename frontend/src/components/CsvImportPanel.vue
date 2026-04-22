@@ -6,22 +6,26 @@ type Preview = {
   rows: string[][]
 }
 
+type ImportResult = {
+  fileName?: string
+  tableName?: string
+  totalRows?: number
+  importedRows?: number
+  skippedRows?: number
+  timeCostMs?: number
+  status?: 'success' | 'partial' | 'failed' | string
+  message?: string
+}
+
+type ApiEnvelope<T> = {
+  code: number
+  message?: string
+  data?: T
+}
+
 type ImportResponse =
-  | {
-      ok: true
-      inserted?: number
-      updated?: number
-      skipped?: number
-      failed?: number
-      message?: string
-      [k: string]: unknown
-    }
-  | {
-      ok: false
-      error: string
-      details?: unknown
-      [k: string]: unknown
-    }
+  | ({ ok: true } & ImportResult)
+  | { ok: false; error: string }
 
 const file = ref<File | null>(null)
 const hasHeader = ref(true)
@@ -192,7 +196,33 @@ async function importCsv() {
     }
 
     if (ct.includes('application/json')) {
-      result.value = (await res.json()) as ImportResponse
+      const envelope = (await res.json()) as ApiEnvelope<ImportResult>
+      if (envelope.code !== 200) {
+        result.value = {
+          ok: false,
+          error: envelope.message || `业务错误（${envelope.code}）`,
+        }
+        return
+      }
+      const d = envelope.data ?? {}
+      if (d.status === 'failed') {
+        result.value = {
+          ok: false,
+          error: d.message || envelope.message || '后端处理失败',
+        }
+        return
+      }
+      result.value = {
+        ok: true,
+        fileName: d.fileName,
+        tableName: d.tableName,
+        totalRows: d.totalRows,
+        importedRows: d.importedRows,
+        skippedRows: d.skippedRows,
+        timeCostMs: d.timeCostMs,
+        status: d.status,
+        message: d.message ?? envelope.message,
+      }
       return
     }
     const text = (await res.text()).trim()
@@ -214,7 +244,7 @@ async function importCsv() {
         <h1 class="ai-panel__title">CSV 导入数据库</h1>
       </div>
       <p class="ai-panel__subtitle">
-        选择 CSV 文件后可预览前 10 行，然后上传到后端导入（默认接口：<code>/api/data</code>）。
+        选择 CSV 文件后可预览前 10 行。
       </p>
     </header>
 
@@ -270,12 +300,16 @@ async function importCsv() {
 
       <div v-if="result" class="csv-result" role="status" aria-live="polite">
         <template v-if="result.ok">
-          <div class="csv-result__title">导入完成</div>
+          <div class="csv-result__title">
+            {{ result.status === 'partial' ? '导入部分完成' : '导入完成' }}
+          </div>
           <div class="csv-result__content">
-            <div v-if="typeof result.inserted === 'number'">新增：{{ result.inserted }}</div>
-            <div v-if="typeof result.updated === 'number'">更新：{{ result.updated }}</div>
-            <div v-if="typeof result.skipped === 'number'">跳过：{{ result.skipped }}</div>
-            <div v-if="typeof result.failed === 'number'">失败：{{ result.failed }}</div>
+            <div v-if="result.fileName">文件：{{ result.fileName }}</div>
+            <div v-if="result.tableName">目标表：{{ result.tableName }}</div>
+            <div v-if="typeof result.totalRows === 'number'">总行数：{{ result.totalRows }}</div>
+            <div v-if="typeof result.importedRows === 'number'">已导入：{{ result.importedRows }}</div>
+            <div v-if="typeof result.skippedRows === 'number'">跳过：{{ result.skippedRows }}</div>
+            <div v-if="typeof result.timeCostMs === 'number'">耗时：{{ (result.timeCostMs / 1000).toFixed(2) }} s</div>
             <div v-if="result.message">{{ result.message }}</div>
           </div>
         </template>

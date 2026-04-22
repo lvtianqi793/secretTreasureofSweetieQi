@@ -18,11 +18,11 @@ RUN mkdir -p /data/csv /data/status && \
     chown -R postgres:postgres /data && \
     chmod -R 755 /data
 
-# 设置环境变量
-ENV POSTGRES_USER=postgres
-ENV POSTGRES_PASSWORD=ltqltq2005
-ENV POSTGRES_DB=energy_management
-ENV TZ=Asia/Shanghai
+# 设置环境变量（通过.env.db文件或docker run命令传入）
+ENV POSTGRES_USER=${POSTGRES_USER:-postgres}
+ENV POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
+ENV POSTGRES_DB=${POSTGRES_DB:-energy_management}
+ENV TZ=${TZ:-Asia/Shanghai}
 
 # 暴露端口
 EXPOSE 5432

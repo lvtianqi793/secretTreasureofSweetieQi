@@ -153,12 +153,21 @@ start_project() {
     log_info "启动能源管理系统..."
     cd "$(dirname "$0")"
     
+    # 检查项目服务是否已经在运行
+    local running_containers=$(docker compose ps --services --filter "status=running")
+    if [ -n "$running_containers" ]; then
+        log_warning "检测到以下服务正在运行: $running_containers"
+        log_warning "正在停止旧服务..."
+        docker compose down
+        log_success "旧服务已停止"
+    fi
+
     docker compose up --build -d
     
     # 等待 AI 网关
     attempt=1
     while [ $attempt -le 30 ]; do
-        if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        if curl -s -f http://localhost:8000/health > /dev/null 2>&1; then
             log_success "AI 网关就绪"
             break
         fi
@@ -169,7 +178,7 @@ start_project() {
     # 等待后端
     attempt=1
     while [ $attempt -le 30 ]; do
-        if curl -s http://localhost:8080/system/health > /dev/null 2>&1; then
+        if curl -s -f http://localhost:8080/api/system/health > /dev/null 2>&1; then
             log_success "后端服务就绪"
             break
         fi

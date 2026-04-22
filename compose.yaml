@@ -18,7 +18,7 @@ services:
     networks:
       - docker_ragflow
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/system/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -109,6 +109,8 @@ services:
           cpus: "0.25"
     volumes:
       - ./logs/ai-gateway:/var/log/ai-gateway # 挂载日志目录
+      # 注意: /app/exports 不挂 named volume, 直接用容器内部目录 (Dockerfile 里 chown 给 appuser)
+      # 命名卷会覆盖镜像层的权限, 导致 export_chart/export_report 无法写入
 
 # 数据卷定义
 volumes:

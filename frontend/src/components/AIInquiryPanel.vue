@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import CsvImportPanel from './CsvImportPanel.vue'
+import { prewarmStats } from '../composables/useStatsPrewarm'
+
+onMounted(() => {
+  prewarmStats()
+})
 
 type Role = 'user' | 'assistant'
 
@@ -46,11 +51,16 @@ function resolveRequestUrl(): string {
  */
 async function requestAssistant(messages: ChatMessage[]): Promise<string> {
   const url = resolveRequestUrl()
-  // 兼容不同后端：既支持 messages，也支持 question
+  // 后端 AiChatRequest 使用 history 字段 (已 @JsonAlias 接受 messages)
+  // question = 当前轮用户输入；history = 之前所有轮次（不含当前这条 user）
   const lastUserMessage = messages.filter((m) => m.role === 'user').at(-1)
+  const history = messages
+    .slice(0, -1)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({ role: m.role, content: m.content }))
   const payload = {
     question: lastUserMessage?.content ?? '',
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    history,
   }
 
   const res = await fetch(url, {
@@ -154,11 +164,7 @@ async function send() {
   }
 }
 
-const modeSubtitle = computed(() =>
-  mode.value === 'kb'
-    ? '当前：知识库（api/ai/ops）；Shift+Enter 换行'
-    : '当前：数据库（api/ai/chat）；Shift+Enter 换行',
-)
+const modeSubtitle = computed(() => 'Shift+Enter 换行')
 
 const inputPlaceholder = computed(() =>
   mode.value === 'kb' ? '向知识库提问…' : '向数据库问答提问…',

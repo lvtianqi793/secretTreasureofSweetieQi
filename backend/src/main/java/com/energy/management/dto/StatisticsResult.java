@@ -76,9 +76,15 @@ public class StatisticsResult {
         private String buildingId;
         private String monitorTime;
         private double value;
+        /** 基线 (IQR法下为该建筑的中位数 Q2) */
         private double mean;
+        /** 波动幅度 (IQR法下为 Q3-Q1) */
         private double stdDev;
+        /** 偏离度 (IQR法下为距离 Q1/Q3 的 IQR 倍数) */
         private double zScore;
-        private String anomalyType; // high, low, spike, drop
+        /** 异常分类: 统计异常 / 数据质量 */
+        private String category;
+        /** 具体类型: 严重偏高/偏高/严重偏低/偏低/负值/缺失值 */
+        private String anomalyType;
     }
 }

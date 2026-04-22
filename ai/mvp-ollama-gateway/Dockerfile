@@ -6,7 +6,7 @@
 
 # Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
 
-ARG PYTHON_VERSION=3.9.6
+ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim as base
 
 # Prevents Python from writing pyc files.
@@ -36,15 +36,24 @@ RUN adduser \
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
 # Leverage a bind mount to requirements.txt to avoid having to copy them into
 # into this layer.
+# Update pip to the latest version before installing dependencies
+RUN python -m pip install --upgrade pip
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
+# Copy the source code into the container (runs as root; files owned by root).
+COPY . .
+
+# Create exports directory and (re)assert appuser ownership AFTER the COPY,
+# otherwise COPY overwrites /app/exports with the host's exports/ directory
+# and flips ownership back to root, breaking write_bytes() at runtime.
+RUN mkdir -p /app/exports && \
+    chown -R appuser:appuser /app/exports && \
+    chmod 755 /app/exports
+
 # Switch to the non-privileged user to run the application.
 USER appuser
-
-# Copy the source code into the container.
-COPY . .
 
 # Expose the port that the application listens on.
 EXPOSE 8000

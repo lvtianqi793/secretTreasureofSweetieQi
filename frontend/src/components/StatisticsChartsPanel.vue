@@ -11,8 +11,6 @@ import {
   type ChartPayload,
   type ChartRequest,
   type EnergyQueryExportBody,
-  type EnergyTypeOption,
-  getEnergyOptions,
   type StatisticsExportBody,
   downloadBlob,
   getChartPie,
@@ -22,6 +20,14 @@ import {
   postEnergyQueryExport,
   postStatisticsExport,
 } from '../api/statistics'
+import {
+  buildingOptions,
+  buildingTypeOptions,
+  consumeDefaultTrend,
+  defaultTrendKey,
+  energyTypeOptions,
+  prewarmStats,
+} from '../composables/useStatsPrewarm'
 
 type ChartTab = 'trend' | 'ranking' | 'pie'
 type ExportTab = 'report' | 'chart' | 'raw'
@@ -32,11 +38,8 @@ const mainTab = ref<'view' | 'export'>('view')
 
 const loading = ref(false)
 const error = ref<string | null>(null)
-const chartHistory = ref<Array<{ id: string; payload: ChartPayload; createdAt: number }>>([])
-const MAX_CHART_CARDS = 20
-
-const energyTypeOptions = ref<EnergyTypeOption[]>([])
-const buildingTypeOptions = ref<string[]>([])
+const currentChart = ref<{ id: string; payload: ChartPayload; createdAt: number } | null>(null)
+const exporting = ref<null | 'report' | 'chart' | 'raw'>(null)
 
 /** 与后端 ChartService 支持的粒度一致 */
 const GRANULARITY_OPTIONS = [
@@ -48,9 +51,9 @@ const GRANULARITY_OPTIONS = [
 ] as const
 
 const ANALYSIS_OPTIONS = [
-  { value: 'summary', label: 'summary' },
-  { value: 'cop', label: 'cop' },
-  { value: 'anomaly', label: 'anomaly' },
+  { value: 'summary', label: '时段汇总' },
+  { value: 'cop', label: 'COP 计算' },
+  { value: 'anomaly', label: '异常检测' },
 ] as const
 
 // —— 快捷：趋势
@@ -69,7 +72,6 @@ const rankBuilding = ref('')
 
 // —— 快捷：饼图
 const pieEnergy = ref('water')
-const pieBuildingType = ref('')
 const pieStart = ref('2016-01-01T00:00')
 const pieEnd = ref('2016-12-31T23:59')
 
@@ -89,7 +91,33 @@ const expChart = ref<ChartRequest>({
   granularity: 'month',
   startTime: '2016-01-01T00:00',
   endTime: '2016-12-31T23:59',
+  dimension: 'time',
+  topN: 10,
 })
+
+const CHART_TYPE_OPTIONS = [
+  { value: 'line', label: '折线图' },
+  { value: 'bar', label: '柱状图' },
+  { value: 'pie', label: '饼图' },
+] as const
+
+const PIE_GROUP_OPTIONS = [
+  { value: 'building', label: '建筑' },
+  { value: 'type', label: '建筑类型' },
+] as const
+
+watch(
+  () => expChart.value.chartType,
+  (t) => {
+    if (t === 'pie') {
+      if (expChart.value.dimension !== 'building' && expChart.value.dimension !== 'type') {
+        expChart.value.dimension = 'building'
+      }
+    } else {
+      expChart.value.dimension = 'time'
+    }
+  }
+)
 
 // —— 导出：原始记录
 const expRaw = ref<EnergyQueryExportBody>({
@@ -97,13 +125,12 @@ const expRaw = ref<EnergyQueryExportBody>({
   format: 'xlsx',
   startTime: '2016-01-01T00:00',
   endTime: '2016-12-31T23:59',
-  page: 1,
-  pageSize: 5000,
+  maxRows: 10000,
   sortBy: 'monitor_time',
   sortOrder: 'desc',
 })
 
-const chartTitle = computed(() => (chartHistory.value.length ? '已生成图表' : '图表预览'))
+const chartTitle = computed(() => (currentChart.value ? '已生成图表' : '图表预览'))
 
 const expReportStart = computed<string>({
   get: () => expReport.value.startTime ?? '',
@@ -152,23 +179,41 @@ function toBackendDateTime(local: string, edge: 'start' | 'end') {
 
 function renderChart(data: ChartPayload) {
   const now = Date.now()
-  chartHistory.value.unshift({
+  currentChart.value = {
     id: `${now}_${Math.random().toString(16).slice(2)}`,
     payload: data,
     createdAt: now,
-  })
-  if (chartHistory.value.length > MAX_CHART_CARDS) chartHistory.value.length = MAX_CHART_CARDS
+  }
 }
 
-async function loadTrend() {
+async function loadTrend(options: { allowCache?: boolean } = {}) {
+  const startBackend = (trendStart.value && toBackendDateTime(trendStart.value, 'start')) || ''
+  const endBackend = (trendEnd.value && toBackendDateTime(trendEnd.value, 'end')) || ''
+
+  if (options.allowCache) {
+    const cached = consumeDefaultTrend({
+      energyType: trendEnergy.value,
+      granularity: trendGranularity.value,
+      startTime: startBackend,
+      endTime: endBackend,
+      buildingId: trendBuilding.value || '',
+    })
+    if (cached) {
+      currentChart.value = cached
+      error.value = null
+      return
+    }
+  }
+
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartTrend({
       energyType: trendEnergy.value,
       granularity: trendGranularity.value,
-      startTime: (trendStart.value && toBackendDateTime(trendStart.value, 'start')) || undefined,
-      endTime: (trendEnd.value && toBackendDateTime(trendEnd.value, 'end')) || undefined,
+      startTime: startBackend || undefined,
+      endTime: endBackend || undefined,
       buildingId: trendBuilding.value || undefined,
     })
     renderChart(data)
@@ -182,6 +227,7 @@ async function loadTrend() {
 async function loadRanking() {
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartRanking({
       energyType: rankEnergy.value,
@@ -201,10 +247,10 @@ async function loadRanking() {
 async function loadPie() {
   loading.value = true
   error.value = null
+  currentChart.value = null
   try {
     const data = await getChartPie({
       energyType: pieEnergy.value,
-      buildingType: pieBuildingType.value || undefined,
       startTime: (pieStart.value && toBackendDateTime(pieStart.value, 'start')) || undefined,
       endTime: (pieEnd.value && toBackendDateTime(pieEnd.value, 'end')) || undefined,
     })
@@ -217,16 +263,10 @@ async function loadPie() {
 }
 
 onMounted(() => {
-  void (async () => {
-    try {
-      const opt = await getEnergyOptions()
-      energyTypeOptions.value = opt.energyTypes ?? []
-      buildingTypeOptions.value = opt.buildingTypes ?? []
-    } catch {
-      // ignore options load errors; fall back to manual input
-    }
-  })()
-  void loadTrend()
+  // 预取入口：若用户先进入 AI 问答再切到此面板，下方调用实际上已是 no-op（幂等）。
+  // 若用户首屏直接到达此面板，这里兜底触发一次。
+  prewarmStats()
+  void loadTrend({ allowCache: true })
 })
 
 onUnmounted(() => {
@@ -234,13 +274,15 @@ onUnmounted(() => {
 
 watch(chartTab, (t) => {
   error.value = null
+  currentChart.value = null
   if (t === 'trend') void loadTrend()
   if (t === 'ranking') void loadRanking()
   if (t === 'pie') void loadPie()
 })
 
 async function doExportReport() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'report'
   error.value = null
   try {
     const blob = await postStatisticsExport({
@@ -255,12 +297,13 @@ async function doExportReport() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 
 async function doExportChart() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'chart'
   error.value = null
   try {
     const blob = await postChartExport({
@@ -272,12 +315,13 @@ async function doExportChart() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 
 async function doExportRaw() {
-  loading.value = true
+  if (exporting.value) return
+  exporting.value = 'raw'
   error.value = null
   try {
     const blob = await postEnergyQueryExport({
@@ -290,7 +334,7 @@ async function doExportRaw() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : '导出失败'
   } finally {
-    loading.value = false
+    exporting.value = null
   }
 }
 </script>
@@ -362,7 +406,11 @@ async function doExportRaw() {
         <div v-if="chartTab === 'trend'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="trendEnergy" class="csv-input" list="energy-types" placeholder="例如 electricity" />
+            <select v-model="trendEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>粒度</span>
@@ -381,16 +429,25 @@ async function doExportRaw() {
             <input v-model="trendEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
-            <span>建筑 ID（可选）</span>
-            <input v-model="trendBuilding" class="csv-input" placeholder="留空表示全部" />
+            <span>建筑（可选）</span>
+            <select v-model="trendBuilding" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="loadTrend">查询</button>
+          <button type="button" class="stats-btn" :disabled="loading" @click="loadTrend()">查询</button>
         </div>
 
         <div v-if="chartTab === 'ranking'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="rankEnergy" class="csv-input" list="energy-types" />
+            <select v-model="rankEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>Top N</span>
@@ -405,8 +462,13 @@ async function doExportRaw() {
             <input v-model="rankEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field stats-field--wide">
-            <span>建筑 ID（可选）</span>
-            <input v-model="rankBuilding" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="rankBuilding" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
           <button type="button" class="stats-btn" :disabled="loading" @click="loadRanking">查询</button>
         </div>
@@ -414,11 +476,11 @@ async function doExportRaw() {
         <div v-if="chartTab === 'pie'" class="stats-form">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="pieEnergy" class="csv-input" list="energy-types" />
-          </label>
-          <label class="stats-field stats-field--wide">
-            <span>建筑类型（可选）</span>
-            <input v-model="pieBuildingType" class="csv-input" list="building-types" />
+            <select v-model="pieEnergy" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>开始</span>
@@ -436,13 +498,17 @@ async function doExportRaw() {
             <span class="stats-chart-head__title">{{ chartTitle }}</span>
             <span v-if="loading" class="stats-chart-head__meta">加载中…</span>
           </div>
-          <div v-if="!chartHistory.length && !loading" class="stats-chart-empty">点击上方「查询」生成图表卡片。</div>
-          <div class="stats-chart-cards">
+          <div class="stats-chart-slot">
+            <div v-if="loading" class="stats-chart-loading" role="status" aria-live="polite">
+              <span class="stats-chart-loading__spinner" aria-hidden="true" />
+              <span class="stats-chart-loading__text">图表加载中…</span>
+            </div>
+            <div v-else-if="!currentChart" class="stats-chart-empty">点击上方「查询」生成图表。</div>
             <ChartPreviewCard
-              v-for="c in chartHistory"
-              :key="c.id"
-              :payload="c.payload"
-              :created-at="c.createdAt"
+              v-else
+              :key="currentChart.id"
+              :payload="currentChart.payload"
+              :created-at="currentChart.createdAt"
             />
           </div>
         </div>
@@ -486,10 +552,18 @@ async function doExportRaw() {
               </option>
             </select>
           </label>
-          <label class="stats-field">
+          <label v-if="expReport.analysisType !== 'cop'" class="stats-field">
             <span>能源类型</span>
-            <input v-model="expReport.energyType" class="csv-input" list="energy-types" />
+            <select v-model="expReport.energyType" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
+          <div v-else class="stats-field stats-field--hint">
+            <span>能源类型</span>
+            <span class="stats-field-hint">冷冻水+电力</span>
+          </div>
           <label class="stats-field">
             <span>粒度</span>
             <select v-model="expReport.granularity" class="csv-input">
@@ -507,30 +581,56 @@ async function doExportRaw() {
             <input v-model="expReportEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
-            <span>建筑 ID</span>
-            <input v-model="expReport.buildingId" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="expReport.buildingId" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportReport">导出统计报表</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'report' }"
+            :disabled="exporting !== null"
+            @click="doExportReport"
+          >
+            <span v-if="exporting === 'report'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'report' ? '正在导出中…' : '导出统计报表' }}
+          </button>
         </div>
 
         <div v-if="exportTab === 'chart'" class="stats-form stats-form--generic">
           <label class="stats-field">
             <span>图表类型</span>
             <select v-model="expChart.chartType" class="csv-input">
-              <option value="line">line</option>
-              <option value="bar">bar</option>
-              <option value="pie">pie</option>
+              <option v-for="c in CHART_TYPE_OPTIONS" :key="c.value" :value="c.value">
+                {{ c.label }}
+              </option>
             </select>
           </label>
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expChart.energyType" class="csv-input" list="energy-types" />
+            <select v-model="expChart.energyType" class="csv-input">
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
-          <label class="stats-field">
+          <label v-if="expChart.chartType !== 'pie'" class="stats-field">
             <span>粒度</span>
             <select v-model="expChart.granularity" class="csv-input">
               <option v-for="g in GRANULARITY_OPTIONS" :key="g.value" :value="g.value">
                 {{ g.label }}
+              </option>
+            </select>
+          </label>
+          <label v-if="expChart.chartType === 'pie'" class="stats-field">
+            <span>分组维度</span>
+            <select v-model="expChart.dimension" class="csv-input">
+              <option v-for="d in PIE_GROUP_OPTIONS" :key="d.value" :value="d.value">
+                {{ d.label }}
               </option>
             </select>
           </label>
@@ -542,17 +642,33 @@ async function doExportRaw() {
             <span>结束</span>
             <input v-model="expChartEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
-          <label class="stats-field">
+          <label
+            v-if="expChart.chartType === 'pie' && expChart.dimension === 'building'"
+            class="stats-field"
+          >
             <span>Top N</span>
-            <input v-model.number="expChart.topN" class="csv-input" type="number" />
+            <input v-model.number="expChart.topN" class="csv-input" type="number" min="1" max="100" />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportChart">导出图表 Excel</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'chart' }"
+            :disabled="exporting !== null"
+            @click="doExportChart"
+          >
+            <span v-if="exporting === 'chart'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'chart' ? '正在导出中…' : '导出图表 Excel' }}
+          </button>
         </div>
 
         <div v-if="exportTab === 'raw'" class="stats-form stats-form--generic">
           <label class="stats-field">
             <span>能源类型</span>
-            <input v-model="expRaw.energyType" class="csv-input" list="energy-types" required />
+            <select v-model="expRaw.energyType" class="csv-input" required>
+              <option v-for="e in energyTypeOptions" :key="e.value" :value="e.value">
+                {{ e.label }}{{ e.unit ? `（${e.unit}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
             <span>格式</span>
@@ -570,14 +686,34 @@ async function doExportRaw() {
             <input v-model="expRawEnd" class="csv-input" type="datetime-local" step="900" />
           </label>
           <label class="stats-field">
-            <span>建筑 ID</span>
-            <input v-model="expRaw.buildingId" class="csv-input" />
+            <span>建筑（可选）</span>
+            <select v-model="expRaw.buildingId" class="csv-input">
+              <option value="">全部建筑</option>
+              <option v-for="b in buildingOptions" :key="b.buildingId" :value="b.buildingId">
+                {{ b.buildingId }}{{ b.buildingType ? `（${b.buildingType}）` : '' }}
+              </option>
+            </select>
           </label>
           <label class="stats-field">
-            <span>每页条数</span>
-            <input v-model.number="expRaw.pageSize" class="csv-input" type="number" min="1" />
+            <span>最大导出量</span>
+            <input
+              v-model.number="expRaw.maxRows"
+              class="csv-input"
+              type="number"
+              min="1"
+              max="1000000"
+            />
           </label>
-          <button type="button" class="stats-btn" :disabled="loading" @click="doExportRaw">导出原始记录</button>
+          <button
+            type="button"
+            class="stats-btn"
+            :class="{ 'stats-btn--busy': exporting === 'raw' }"
+            :disabled="exporting !== null"
+            @click="doExportRaw"
+          >
+            <span v-if="exporting === 'raw'" class="stats-btn__spinner" aria-hidden="true" />
+            {{ exporting === 'raw' ? '正在导出中…' : '导出原始记录' }}
+          </button>
         </div>
       </template>
     </div>

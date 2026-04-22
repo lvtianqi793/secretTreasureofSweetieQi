@@ -484,15 +484,12 @@ body {
 }
 
 .ai-quick-questions--dock {
-  position: absolute;
-  left: 1rem;
-  bottom: calc(100% + 0.45rem);
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: flex-start;
   gap: 0.4rem;
-  width: min(560px, calc(100% - 2rem));
+  margin-bottom: 0.55rem;
   pointer-events: auto;
 }
 
@@ -978,6 +975,20 @@ body {
   white-space: nowrap;
 }
 
+.stats-field-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.45rem;
+  padding: 0.35rem 0.6rem;
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  white-space: normal;
+}
+
 .stats-btn {
   align-self: end;
   display: inline-flex;
@@ -1007,6 +1018,21 @@ body {
 .stats-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.stats-btn--busy {
+  gap: 0.45rem;
+  opacity: 0.85 !important;
+  cursor: progress !important;
+}
+
+.stats-btn__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: stats-chart-spin 0.8s linear infinite;
 }
 
 .stats-chart-wrap {
@@ -1056,6 +1082,52 @@ body {
 .stats-chart-cards {
   display: grid;
   gap: 0.85rem;
+}
+
+.stats-chart-slot {
+  flex: 1;
+  min-height: 360px;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.stats-chart-slot > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.stats-chart-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 360px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.stats-chart-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent, #4c9cff);
+  border-radius: 50%;
+  animation: stats-chart-spin 0.9s linear infinite;
+}
+
+.stats-chart-loading__text {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+@keyframes stats-chart-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .stats-export-hint {
